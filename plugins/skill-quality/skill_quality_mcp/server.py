@@ -12,6 +12,7 @@ from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
 
 from . import __version__
 from . import deps as sq_deps
@@ -79,14 +80,17 @@ def strip_titles(schema):
         for v in schema: strip_titles(v)
 
 
-def tool(fn):
+def tool(fn=None, *, read_only=True, open_world=False):
     """注册工具；配置缺失、路径不存在这类预期错误转成 ToolError，Agent 能看到原因而不是"工具崩溃"。
-    返回值都是文本，关掉 structured_output，省掉多余的 output_schema。"""
+    返回值都是文本，关掉 structured_output，省掉多余的 output_schema。
+    read_only：除了往系统临时目录写完整报告，不改动用户的任何文件或服务；open_world：会访问外部网络服务。"""
+    if fn is None: return functools.partial(tool, read_only=read_only, open_world=open_world)
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try: return fn(*args, **kwargs)
         except (RuntimeError, ValueError, OSError) as e: raise ToolError(str(e)) from None
-    mcp.tool(description=inspect.cleandoc(fn.__doc__ or ''), structured_output=False)(wrapper)
+    hints = ToolAnnotations(read_only_hint=read_only, open_world_hint=open_world, **({} if read_only else {'destructive_hint': False}))
+    mcp.tool(description=inspect.cleandoc(fn.__doc__ or ''), annotations=hints, structured_output=False)(wrapper)
     strip_titles(mcp._tool_manager.get_tool(fn.__name__).parameters)
     return wrapper
 
@@ -127,7 +131,7 @@ def inspect_skill(skill: str, detail: bool = False) -> str:
     return note + brief_or_full(f"skill-{result.get('name') or path.name}", brief, full, detail)
 
 
-@tool
+@tool(open_world=True)
 def analyze_dependencies(path: str, check_vulnerabilities: bool = False, detail: bool = False) -> str:
     """依赖分析：第三方包是否安装/声明、未用的声明、循环依赖、外部命令是否在 PATH、package.json。
     check_vulnerabilities：联网查 OSV 漏洞。detail：列出每个包的使用文件和全部漏洞编号。"""
@@ -146,13 +150,13 @@ def code_quality_scan(path: str, use_ruff: bool = True, max_issues: int = 30, de
     return note + brief_or_full(f'quality-{target.name}', brief, sq_report.local_section(q, None), detail)
 
 
-@tool
+@tool(open_world=True)
 def sonar_check_connection() -> str:
     """检查 SonarQube/SonarCloud 配置、连通性、令牌和 sonar-scanner 是否可用。"""
     return dump(sq_sonar.check_connection())
 
 
-@tool
+@tool(open_world=True)
 def sonar_issues(project_key: str = '', types: str = 'BUG,VULNERABILITY', severities: str = '', limit: int = 50, detail: bool = False) -> str:
     """拉取 SonarQube 未解决问题。types：BUG,VULNERABILITY,CODE_SMELL；severities：BLOCKER..INFO，空为全部；
     project_key 空则用 SONAR_PROJECT_KEY。"""
@@ -163,20 +167,20 @@ def sonar_issues(project_key: str = '', types: str = 'BUG,VULNERABILITY', severi
     return brief_or_full(f"sonar-{data['project']}", head + sq_report.issues_block(issues), head + sq_report.issues_block(issues, None), detail)
 
 
-@tool
+@tool(open_world=True)
 def sonar_project_metrics(project_key: str = '') -> str:
     """SonarQube 项目指标：质量门禁、三项评级、Bug/漏洞/异味数、覆盖率、重复率。"""
     return dump(sq_sonar.metrics(project_key))
 
 
-@tool
+@tool(read_only=False, open_world=True)
 def sonar_run_scan(path: str, project_key: str = '', use_npx: bool = False) -> str:
     """用 sonar-scanner 扫描并上传到 SonarQube，等待分析完成。没装扫描器可 use_npx=true（首次会下载）。"""
     target, _, _ = resolve_target(path)
     return dump(sq_sonar.run_scan(target if target.is_dir() else target.parent, project_key, True, use_npx))
 
 
-@tool
+@tool(read_only=False, open_world=True)
 def full_quality_report(target: str, sonar: str = 'auto', check_vulnerabilities: bool = False, detail: bool = False, save_to: str = '') -> str:
     """一站式报告：Skill 结构（目标是技能时）+ 依赖 + 本地扫描 + SonarQube，给出 通过/有警告/未通过。
     sonar：auto=已配置就拉结果，scan=先扫描再拉，off=不用。check_vulnerabilities：联网查 OSV。

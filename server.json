@@ -1,0 +1,27 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.LoveMuZiLi/skill-quality-mcp",
+  "title": "Skill Quality",
+  "description": "Check Agent Skills, dependencies, bugs and code quality; optional SonarQube integration.",
+  "repository": {
+    "url": "https://github.com/LoveMuZiLi/skill-quality-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/LoveMuZiLi/skill-quality-mcp",
+  "version": "1.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "skill-quality-mcp",
+      "version": "1.1.1",
+      "runtimeHint": "uvx",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        { "name": "SONAR_HOST_URL", "description": "SonarQube URL, e.g. http://localhost:9000 (optional)", "isRequired": false, "format": "string" },
+        { "name": "SONAR_TOKEN", "description": "SonarQube user token (optional)", "isRequired": false, "isSecret": true, "format": "string" },
+        { "name": "SONAR_PROJECT_KEY", "description": "Default SonarQube project key (optional)", "isRequired": false, "format": "string" },
+        { "name": "SONAR_ORGANIZATION", "description": "SonarCloud organization (SonarCloud only)", "isRequired": false, "format": "string" }
+      ]
+    }
+  ]
+}

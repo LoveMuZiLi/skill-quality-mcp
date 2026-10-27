@@ -1,6 +1,6 @@
 {
   "name": "skill-quality",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Agent Skills 结构检查 + 依赖分析 + SonarQube Bug 检测 + 代码质量评级，合成一个 MCP 服务，附带使用它的 Skill。\n\nUse when the user asks to check, review or audit an Agent Skill (SKILL.md) or a code directory: bugs, dependencies, SonarQube issues, code quality ratings.",
   "author": {
     "name": "LoveMuZiLi",
@@ -30,7 +30,11 @@
       "检查我的 Agent Skill 质量",
       "扫描这个目录的 Bug 和依赖"
     ],
-    "websiteURL": "https://github.com/LoveMuZiLi/skill-quality-mcp"
+    "websiteURL": "https://github.com/LoveMuZiLi/skill-quality-mcp",
+    "supportURL": "https://github.com/LoveMuZiLi/skill-quality-mcp/issues",
+    "brandColor": "#1E3A8A",
+    "logo": "./assets/logo.png",
+    "composerIcon": "./assets/logo.png"
   },
   "homepage": "https://github.com/LoveMuZiLi/skill-quality-mcp",
   "repository": "https://github.com/LoveMuZiLi/skill-quality-mcp"

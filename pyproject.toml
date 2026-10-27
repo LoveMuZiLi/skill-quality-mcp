@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "skill-quality-mcp"
-version = "1.1.0"
+version = "1.1.1"
 description = "MCP server: Agent Skills checks + dependency analysis + SonarQube bug detection + code quality ratings"
 readme = "README.md"
 license = "MIT"
@@ -17,6 +17,7 @@ authors = [{ name = "LoveMuZiLi" }]
 [project.urls]
 Homepage = "https://github.com/LoveMuZiLi/skill-quality-mcp"
 Repository = "https://github.com/LoveMuZiLi/skill-quality-mcp"
+Issues = "https://github.com/LoveMuZiLi/skill-quality-mcp/issues"
 
 [project.scripts]
 skill-quality-mcp = "skill_quality_mcp.server:main"

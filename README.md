@@ -1,4 +1,7 @@
+<!-- mcp-name: io.github.LoveMuZiLi/skill-quality-mcp -->
 <div align="center">
+
+<img src="https://raw.githubusercontent.com/LoveMuZiLi/skill-quality-mcp/main/plugins/skill-quality/assets/logo.svg" width="96" alt="Skill Quality logo">
 
 # Skill Quality MCP
 
