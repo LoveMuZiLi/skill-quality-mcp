@@ -220,6 +220,8 @@ pip install git+https://github.com/LoveMuZiLi/skill-quality-mcp
 
 另附提示词 **`review_skill`**：先出报告，再按严重度给修复方案。
 
+**省 token 的输出方式**：默认返回简版：各类计数完整，问题只逐条列前 15 条（漏洞 → Bug → 安全热点 → 代码异味），其余按规则给出条数；全部明细写进文件，末尾给出路径，Agent 需要时再读。传 `detail=true` 直接返回完整版。同一份 125 个文件的代码库，简版约 1k token；工具描述本身约 1.2k token。
+
 <details>
 <summary><b>本地检测规则一览</b>（规则 ID 近似对应 SonarQube 同名规则）</summary>
 

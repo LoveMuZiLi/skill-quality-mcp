@@ -9,22 +9,18 @@ import importlib.util
 import urllib.request
 from pathlib import Path
 
-from .skills import SKIP_DIRS
+from .skills import walk_files
+
+PY_FILE_LIMIT = 5000
 
 KNOWN_COMMANDS = {'ffmpeg', 'ffprobe', 'git', 'node', 'npx', 'npm', 'java', 'docker', 'sonar-scanner', 'powershell', 'pwsh',
                   'python', 'pip', 'uv', 'ruff', 'magick', 'curl'}
 SUBPROCESS_CALLS = {'run', 'Popen', 'call', 'check_call', 'check_output', 'system'}
 
 
-def python_files(root, limit=2000):
-    root = Path(root)
-    if root.is_file(): return [root] if root.suffix == '.py' else []
-    out = []
-    for f in root.rglob('*.py'):
-        if SKIP_DIRS & set(f.parts): continue
-        out.append(f)
-        if len(out) >= limit: break
-    return sorted(out)
+def python_files(root):
+    """返回 (文件列表, 是否截断)；超过 PY_FILE_LIMIT 个文件时截断，调用方必须在报告里注明。"""
+    return walk_files(root, {'.py'}, PY_FILE_LIMIT)
 
 
 def norm(name): return re.sub(r'[-_.]+', '-', name).lower()
@@ -99,7 +95,16 @@ def _extra_sys_paths(tree):
 
 def scan_imports(files, root):
     root = Path(root if Path(root).is_dir() else Path(root).parent)
-    local_names = {f.stem for f in files} | {d.name for d in root.iterdir() if d.is_dir() and (d/'__init__.py').exists()}
+    # 绝对导入只会解析到：根目录下的顶层模块/包、目标本身这个包、以及脚本所在目录的同级模块（直接运行脚本时）。
+    # 包里深层的 logging.py 不会遮住标准库 logging，不能按“目录里有同名文件”判本地。
+    top_level = {f.relative_to(root).parts[0].removesuffix('.py') for f in files if f.is_relative_to(root)}
+    if (root/'__init__.py').exists(): top_level.add(root.name)
+    sibling_cache = {}
+    def siblings(d):
+        if d not in sibling_cache:
+            sibling_cache[d] = {p.stem for p in d.glob('*.py')} | {p.name for p in d.iterdir() if p.is_dir() and (p/'__init__.py').exists()}
+        return sibling_cache[d]
+    local_names = set(top_level)
     imports, graph, commands, errors = {}, {}, {}, []
     extra_paths = []
     for f in files:
@@ -112,6 +117,8 @@ def scan_imports(files, root):
         def chain(n):
             while n in parents_of: n = parents_of[n]; yield n
         mod = f.stem; graph.setdefault(mod, set())
+        file_locals = top_level | siblings(f.parent)
+        local_names |= file_locals
         extra_paths += [p for p in _extra_sys_paths(tree) if p not in extra_paths]
         for node in ast.walk(tree):
             names = []
@@ -124,7 +131,7 @@ def scan_imports(files, root):
                 rec = imports.setdefault(name, {'files': set(), 'optional': True})
                 rec['files'].add(str(f.relative_to(root)) if f.is_relative_to(root) else str(f))
                 rec['optional'] &= _optional_import(node, chain(node))
-                if name in local_names: graph[mod].add(name)
+                if name in file_locals and name != mod: graph[mod].add(name)
             if isinstance(node, ast.Call):
                 cmd = _command_name(node)
                 if cmd: commands.setdefault(cmd, set()).add(f'{f.name}:{node.lineno}')
@@ -202,7 +209,7 @@ def _fixed_versions(vulns, timeout):
 
 def analyze(path, check_vulnerabilities=False):
     root = Path(path).expanduser().resolve()
-    files = python_files(root)
+    files, truncated = python_files(root)
     base = root if root.is_dir() else root.parent
     imports, graph, commands, errors, local_names, extra_paths = scan_imports(files, base)
     dist_map = md.packages_distributions()
@@ -232,7 +239,7 @@ def analyze(path, check_vulnerabilities=False):
     vulns, vuln_error = [], None
     if check_vulnerabilities:
         vulns, vuln_error = osv_vulnerabilities(sorted({(e['distribution'], e['version']) for e in third_party if e['distribution'] and e['version']}))
-    return {'path': str(root), 'python_files': len(files), 'manifests': manifests, 'third_party': third_party, 'extra_sys_paths': extra_paths,
+    return {'path': str(root), 'python_files': len(files), 'truncated': truncated, 'manifests': manifests, 'third_party': third_party, 'extra_sys_paths': extra_paths,
             'missing': missing, 'undeclared': undeclared, 'unused_declared': unused_declared,
             'internal_graph': {k: sorted(v) for k, v in graph.items() if v}, 'cycles': find_cycles(graph),
             'external_tools': tools, 'node': node_dependencies(base), 'syntax_errors': errors,

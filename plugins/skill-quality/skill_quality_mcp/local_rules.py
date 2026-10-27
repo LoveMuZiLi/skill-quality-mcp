@@ -242,12 +242,21 @@ def duplication(texts):
         for k in range(len(lines) - DUP_WINDOW + 1):
             chunk = lines[k:k + DUP_WINDOW]
             windows[hashlib.md5('\n'.join(l for _, l in chunk).encode()).hexdigest()].append((rel, [i for i, _ in chunk]))
-    blocks = []
+    # 同一段重复代码会被相邻的滑动窗口命中多次：起点都顺移的窗口合并成一个行区间
+    runs = []
     for locs in windows.values():
-        if len(locs) > 1:
-            for rel, nums in locs: dup_lines |= {(rel, n) for n in nums}
-            blocks.append([f'{rel}:{nums[0]}' for rel, nums in locs])
-    return round(100 * len(dup_lines) / total, 1) if total else 0.0, blocks[:10]
+        if len(locs) < 2: continue
+        for rel, nums in locs: dup_lines |= {(rel, n) for n in nums}
+        key = tuple(rel for rel, _ in locs)
+        starts, ends = [nums[0] for _, nums in locs], [nums[-1] for _, nums in locs]
+        for run in runs:
+            if run['key'] == key and all(0 < s - rs <= DUP_WINDOW for s, rs in zip(starts, run['last'])):
+                run['last'], run['ends'] = starts, [max(a, b) for a, b in zip(run['ends'], ends)]
+                break
+        else:
+            runs.append({'key': key, 'starts': starts, 'last': starts, 'ends': ends})
+    blocks = [[f'{rel}:{s}-{e}' for rel, s, e in zip(r['key'], r['starts'], r['ends'])] for r in runs]
+    return round(100 * len(dup_lines) / total, 1) if total else 0.0, blocks
 
 
 def rating_by_worst(items):
@@ -257,7 +266,7 @@ def rating_by_worst(items):
 
 def scan(path, use_ruff=True):
     root = Path(path).expanduser().resolve(); base = root if root.is_dir() else root.parent
-    files = python_files(root); issues, texts, ncloc, functions = [], {}, 0, 0
+    (files, truncated), issues, texts, ncloc, functions = python_files(root), [], {}, 0, 0
     for f in files:
         rel = str(f.relative_to(base)); text = f.read_text(encoding='utf-8', errors='replace'); texts[rel] = text
         ncloc += sum(1 for l in text.splitlines() if l.strip() and not l.strip().startswith('#'))
@@ -285,7 +294,7 @@ def scan(path, use_ruff=True):
     debt = sum(DEBT_MINUTES[i['severity']] for i in by_type('CODE_SMELL'))
     ratio = debt / (ncloc * 30) if ncloc else 0
     maint = next(r for r, limit in [('A', .05), ('B', .1), ('C', .2), ('D', .5), ('E', 9e9)] if ratio <= limit)
-    return {'path': str(root), 'files': len(files), 'ncloc': ncloc, 'functions': functions, 'issues': issues,
+    return {'path': str(root), 'files': len(files), 'truncated': truncated, 'ncloc': ncloc, 'functions': functions, 'issues': issues,
             'counts': {t: len(by_type(t)) for t in ('BUG', 'VULNERABILITY', 'SECURITY_HOTSPOT', 'CODE_SMELL')},
             'ratings': {'reliability': rating_by_worst(by_type('BUG')), 'security': rating_by_worst(by_type('VULNERABILITY')), 'maintainability': maint},
             'technical_debt_minutes': debt, 'debt_ratio_percent': round(ratio * 100, 1),

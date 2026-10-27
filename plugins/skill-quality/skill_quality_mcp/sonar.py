@@ -91,9 +91,10 @@ def hotspots(key='', limit=50):
     key = project_key(key)
     data = api('api/hotspots/search', {'projectKey': key, 'status': 'TO_REVIEW', 'ps': max(1, min(int(limit), 500)),
                                        'organization': config()['organization']})
-    return [{'type': 'SECURITY_HOTSPOT', 'severity': h.get('vulnerabilityProbability'), 'rule': h.get('ruleKey'),
-             'message': h.get('message'), 'file': h.get('component', '').split(':', 1)[-1], 'line': h.get('line')}
-            for h in data.get('hotspots', [])]
+    items = [{'type': 'SECURITY_HOTSPOT', 'severity': h.get('vulnerabilityProbability'), 'rule': h.get('ruleKey'),
+              'message': h.get('message'), 'file': h.get('component', '').split(':', 1)[-1], 'line': h.get('line')}
+             for h in data.get('hotspots', [])]
+    return {'total': (data.get('paging') or {}).get('total', len(items)), 'hotspots': items}
 
 
 def metrics(key=''):

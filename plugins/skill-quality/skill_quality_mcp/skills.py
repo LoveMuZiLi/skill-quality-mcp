@@ -1,4 +1,5 @@
 """发现并校验 Cursor / Codex Agent Skills（SKILL.md）。"""
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -8,6 +9,21 @@ DESCRIPTION_MAX, BODY_LINES_MAX = 1024, 500
 LINK_RE = re.compile(r'(?<!!)\[[^\]]*\]\(([^)\s]+)\)')
 CODE_PATH_RE = re.compile(r'`((?:scripts|references|assets|agents)/[^`\s]+)`')
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'site-packages'}
+
+
+def walk_files(root, suffixes=None, limit=None):
+    """遍历 root 下的文件，返回 (文件列表, 是否因 limit 截断)。
+    SKIP_DIRS 只对 root 以下的目录生效：目标本身位于 site-packages 里时照样扫描。"""
+    root = Path(root)
+    if root.is_file(): return ([root] if not suffixes or root.suffix in suffixes else []), False
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        for name in sorted(filenames):
+            if suffixes and Path(name).suffix not in suffixes: continue
+            out.append(Path(dirpath)/name)
+            if limit and len(out) >= limit: return out, True
+    return out, False
 
 
 def default_roots():
@@ -65,11 +81,28 @@ def list_skills(extra_dirs=''):
             key = str(f.resolve()).lower()
             if key in seen: continue
             seen.add(key)
-            meta, _ = parse_frontmatter(f.read_text(encoding='utf-8', errors='replace'))
+            raw = f.read_bytes()
+            meta, _ = parse_frontmatter(raw.decode('utf-8', errors='replace'))
             meta = meta or {}
             skills.append({'name': meta.get('name') or f.parent.name, 'description': meta.get('description', ''),
-                           'path': str(f.parent), 'root': str(root)})
+                           'path': str(f.parent), 'root': str(root),
+                           'digest': hashlib.sha1(raw.replace(b'\r\n', b'\n')).hexdigest()[:12]})
     return skills
+
+
+def name_conflicts(skills):
+    """同名技能分两类：内容完全相同的镜像（如 Cursor 与 Codex 各装一份）和内容不同的真冲突。"""
+    by_name = {}
+    for s in skills: by_name.setdefault(s['name'], []).append(s)
+    mirrors, conflicts = {}, {}
+    for name, group in by_name.items():
+        if len(group) < 2: continue
+        (mirrors if len({s['digest'] for s in group}) == 1 else conflicts)[name] = group
+    return mirrors, conflicts
+
+
+def skill_matches(target):
+    return [s for s in list_skills() if s['name'] == target or Path(s['path']).name == target]
 
 
 def resolve_skill(target):
@@ -77,7 +110,7 @@ def resolve_skill(target):
     p = Path(target).expanduser()
     if p.is_file() and p.name == 'SKILL.md': return p.parent
     if p.is_dir() and (p/'SKILL.md').is_file(): return p
-    matches = [s for s in list_skills() if s['name'] == target or Path(s['path']).name == target]
+    matches = skill_matches(target)
     return Path(matches[0]['path']) if matches else None
 
 
@@ -123,7 +156,8 @@ def validate_skill(skill_dir):
     body_lines = body.count('\n') + 1
     if body_lines > BODY_LINES_MAX:
         issues.append(issue('MAJOR', 'skill:body-length', f'SKILL.md 正文 {body_lines} 行，超过 {BODY_LINES_MAX} 行，细节应拆到 references/', skill_md))
-    md_files = [f for f in skill_dir.rglob('*.md') if not SKIP_DIRS & set(f.parts)]
+    all_files, _ = walk_files(skill_dir)
+    md_files = [f for f in all_files if f.suffix == '.md']
     anchor_cache = {}
     for md in md_files:
         lines = md.read_text(encoding='utf-8', errors='replace').splitlines(); in_code = False
@@ -144,5 +178,7 @@ def validate_skill(skill_dir):
                 clean = ref.split('#')[0].rstrip('.,;:)')
                 if any(ch in clean for ch in '*<>{}') or (skill_dir/clean).exists(): continue
                 issues.append(issue('MINOR', 'skill:missing-file', f'文中提到的 `{clean}` 在技能目录里不存在', md, no))
-    files = sorted(str(f.relative_to(skill_dir)) for f in skill_dir.rglob('*') if f.is_file() and not SKIP_DIRS & set(f.parts))
+    files = sorted(str(f.relative_to(skill_dir)) for f in all_files)
+    for i in issues:
+        if i['file'] and Path(i['file']).is_relative_to(skill_dir): i['file'] = str(Path(i['file']).relative_to(skill_dir))
     return {'skill': str(skill_dir), 'name': name, 'description': desc, 'body_lines': body_lines, 'files': files, 'issues': issues}
