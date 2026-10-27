@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "skill-quality": {
+      "command": "python",
+      "args": ["${CURSOR_PLUGIN_ROOT}/server.py"],
+      "cwd": "${CURSOR_PLUGIN_ROOT}",
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "SONAR_HOST_URL": "${env:SONAR_HOST_URL}",
+        "SONAR_TOKEN": "${env:SONAR_TOKEN}",
+        "SONAR_PROJECT_KEY": "${env:SONAR_PROJECT_KEY}",
+        "SONAR_ORGANIZATION": "${env:SONAR_ORGANIZATION}",
+        "SONAR_SCANNER": "${env:SONAR_SCANNER}",
+        "SKILL_DIRS": "${env:SKILL_DIRS}"
+      }
+    }
+  }
+}

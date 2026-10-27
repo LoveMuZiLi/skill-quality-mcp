@@ -1,0 +1,20 @@
+{
+  "name": "skill-quality-mcp",
+  "interface": {
+    "displayName": "Skill Quality MCP"
+  },
+  "plugins": [
+    {
+      "name": "skill-quality",
+      "source": {
+        "source": "local",
+        "path": "./plugins/skill-quality"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

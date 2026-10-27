@@ -1,0 +1,17 @@
+{
+  "name": "skill-quality-mcp",
+  "owner": {
+    "name": "LoveMuZiLi"
+  },
+  "metadata": {
+    "description": "Agent Skills、依赖、SonarQube 与代码质量一站式检查",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "skill-quality",
+      "source": "plugins/skill-quality",
+      "description": "Agent Skills 结构检查 + 依赖分析 + SonarQube Bug 检测 + 代码质量评级"
+    }
+  ]
+}

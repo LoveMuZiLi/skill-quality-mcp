@@ -1,0 +1,37 @@
+{
+  "name": "skill-quality",
+  "version": "1.0.0",
+  "description": "Agent Skills 结构检查 + 依赖分析 + SonarQube Bug 检测 + 代码质量评级，合成一个 MCP 服务，附带使用它的 Skill。\n\nUse when the user asks to check, review or audit an Agent Skill (SKILL.md) or a code directory: bugs, dependencies, SonarQube issues, code quality ratings.",
+  "author": {
+    "name": "LoveMuZiLi",
+    "url": "https://github.com/LoveMuZiLi"
+  },
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "skills",
+    "sonarqube",
+    "code-quality",
+    "dependencies",
+    "bug-detection"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Skill Quality",
+    "shortDescription": "Skill、依赖、SonarQube、代码质量一站式检查",
+    "longDescription": "检查 Agent Skill 的 frontmatter、失效链接和锚点；分析第三方依赖是否安装、声明、有已知漏洞（OSV）；本地扫描 Bug、漏洞、安全热点、代码异味并按 SonarQube 口径给 A–E 评级；配置 SonarQube/SonarCloud 后可拉取问题、指标和质量门禁，或直接扫描上传。",
+    "developerName": "LoveMuZiLi",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read"
+    ],
+    "defaultPrompt": [
+      "检查我的 Agent Skill 质量",
+      "扫描这个目录的 Bug 和依赖"
+    ],
+    "websiteURL": "https://github.com/LoveMuZiLi/skill-quality-mcp"
+  },
+  "homepage": "https://github.com/LoveMuZiLi/skill-quality-mcp",
+  "repository": "https://github.com/LoveMuZiLi/skill-quality-mcp"
+}
