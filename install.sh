@@ -9,7 +9,6 @@ PLUGIN=skill-quality; MARKETPLACE=skill-quality-mcp
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 LOCAL=0
 if [ -n "$ROOT" ] && [ -f "$ROOT/plugins/$PLUGIN/server.py" ]; then LOCAL=1; else
-  case "$REPO" in *LoveMuZiLi/skill-quality-mcp*) echo "Set REPO=owner/name"; exit 1;; esac
   TMP="$(mktemp -d)"; echo "Downloading $REPO@$REF ..."
   curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/$REF" | tar -xz -C "$TMP"
   ROOT="$(find "$TMP" -mindepth 1 -maxdepth 1 -type d | head -n1)"

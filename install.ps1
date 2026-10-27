@@ -46,7 +46,6 @@ function Find-Codex {
 $Root = $PSScriptRoot
 $IsLocal = $Root -and (Test-Path (Join-Path $Root "plugins\$PluginName\server.py"))
 if (-not $IsLocal) {
-    if ($Repo -like '*LoveMuZiLi/skill-quality-mcp*') { throw 'Pass -Repo owner/name, e.g. -Repo yourname/skill-quality-mcp' }
     $tmp = Join-Path $env:TEMP "skill-quality-mcp-$([guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $tmp -ErrorAction Stop | Out-Null
     $zip = Join-Path $tmp 'repo.zip'
