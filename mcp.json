@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "skill-quality": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "P=https://github.com/LoveMuZiLi/skill-quality-mcp/archive/refs/heads/main.zip; command -v uvx >/dev/null 2>&1 && exec uvx --from $P skill-quality-mcp; for c in python3 python; do $c -c 'import sys' 2>/dev/null && PY=$c && break; done; $PY -c 'import skill_quality_mcp' 2>/dev/null || $PY -m pip install -q $P >&2 || $PY -m pip install -q --user $P >&2 || $PY -m pip install -q --user --break-system-packages $P >&2; exec $PY -m skill_quality_mcp"
+      ]
+    }
+  }
+}
