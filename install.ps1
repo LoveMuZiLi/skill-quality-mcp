@@ -65,9 +65,9 @@ if ($LASTEXITCODE -ne 0) { throw 'pip install mcp failed' }
 # 3. Cursor: local plugin folder (must be a real copy, symlinks outside plugins/local are ignored).
 if (-not $CodexOnly) {
     $dest = Join-Path $env:USERPROFILE ".cursor\plugins\local\$PluginName"
-    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force -ErrorAction Stop }
+    # Mirror in place instead of deleting: a running MCP server keeps the folder busy as its working directory.
     New-Item -ItemType Directory -Path $dest -Force -ErrorAction Stop | Out-Null
-    robocopy $Plugin $dest /E /XD __pycache__ /NFL /NDL /NJH /NJS /NP | Out-Null
+    robocopy $Plugin $dest /MIR /XD __pycache__ /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "Copy to $dest failed" }
     Write-Host "Cursor: installed to $dest  ->  run 'Developer: Reload Window' in Cursor"
 }
