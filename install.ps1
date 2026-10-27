@@ -13,6 +13,16 @@ $ErrorActionPreference = 'Continue'
 $PluginName = 'skill-quality'
 $Marketplace = 'skill-quality-mcp'
 
+# git and codex ignore the Windows system proxy; hand it to them when github.com is only reachable through it.
+if (-not $env:HTTPS_PROXY) {
+    $inet = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+    if ($inet -and $inet.ProxyEnable -eq 1 -and $inet.ProxyServer -match '^[\w\.\-]+:\d+$') {
+        $env:HTTPS_PROXY = "http://$($inet.ProxyServer)"
+        $env:HTTP_PROXY = $env:HTTPS_PROXY
+        Write-Host "Using system proxy $env:HTTPS_PROXY"
+    }
+}
+
 function Find-Python {
     foreach ($name in 'python', 'py') {
         $cmd = Get-Command $name -ErrorAction SilentlyContinue

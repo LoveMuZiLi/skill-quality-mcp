@@ -27,6 +27,8 @@ macOS / Linux：
 curl -fsSL https://raw.githubusercontent.com/LoveMuZiLi/skill-quality-mcp/main/install.sh | bash
 ```
 
+直连不了 github.com 时：Windows 脚本会自动沿用系统代理；macOS / Linux 先 `export HTTPS_PROXY=http://127.0.0.1:7890`（换成你的代理端口）。
+
 装完：Cursor 里运行 **Developer: Reload Window**；Codex 新开一个对话。只装一边时，PowerShell 加 `-CursorOnly` / `-CodexOnly`，bash 加 `--cursor-only` / `--codex-only`（远程运行时先下载脚本再带参数执行）。
 
 ### Codex（手动）
