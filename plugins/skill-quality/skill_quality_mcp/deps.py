@@ -1,4 +1,5 @@
-"""依赖分析：Python 导入、依赖声明、内部循环依赖、外部命令、已知漏洞（OSV）。"""
+"""依赖分析：Python 导入、依赖声明、内部循环依赖、外部命令；npm / Maven / Gradle / Go / Composer / NuGet 见 ecosystems.py；
+已知漏洞统一查 OSV。"""
 import ast
 import json
 import re
@@ -7,20 +8,15 @@ import sys
 import importlib.metadata as md
 import importlib.util
 import urllib.request
+from collections import Counter
 from pathlib import Path
 
-from .skills import walk_files
-
-PY_FILE_LIMIT = 5000
+from . import ecosystems
+from .languages import DISPLAY, code_files, language_of
 
 KNOWN_COMMANDS = {'ffmpeg', 'ffprobe', 'git', 'node', 'npx', 'npm', 'java', 'docker', 'sonar-scanner', 'powershell', 'pwsh',
                   'python', 'pip', 'uv', 'ruff', 'magick', 'curl'}
 SUBPROCESS_CALLS = {'run', 'Popen', 'call', 'check_call', 'check_output', 'system'}
-
-
-def python_files(root):
-    """返回 (文件列表, 是否截断)；超过 PY_FILE_LIMIT 个文件时截断，调用方必须在报告里注明。"""
-    return walk_files(root, {'.py'}, PY_FILE_LIMIT)
 
 
 def norm(name): return re.sub(r'[-_.]+', '-', name).lower()
@@ -44,16 +40,6 @@ def declared_dependencies(root):
         deps += list(data.get('tool', {}).get('poetry', {}).get('dependencies', {}).keys())
         found |= {norm(re.split(r'[\s<>=!~;\[]', d)[0]) for d in deps if d and d != 'python'}
     return found, manifests
-
-
-def node_dependencies(root):
-    pkg = Path(root)/'package.json'
-    if not pkg.is_file(): return None
-    data = json.loads(pkg.read_text(encoding='utf-8'))
-    deps = {**data.get('dependencies', {}), **data.get('devDependencies', {})}
-    installed = (Path(root)/'node_modules').is_dir()
-    return {'declared': deps, 'node_modules_present': installed,
-            'missing': [d for d in deps if installed and not (Path(root)/'node_modules'/d).exists()]}
 
 
 def _optional_import(node, parents):
@@ -171,25 +157,30 @@ def find_cycles(graph):
     return cycles
 
 
+OSV_BATCH = 1000
+
+
 def osv_vulnerabilities(packages, timeout=20):
-    """packages: [(dist_name, version)]，查 https://osv.dev 的 PyPI 漏洞库。"""
+    """packages: [(生态, 包名, 版本)]，生态用 OSV 的写法（PyPI、npm、Maven、Go、Packagist、NuGet），查 https://osv.dev。"""
     if not packages: return [], None
-    body = json.dumps({'queries': [{'package': {'name': n, 'ecosystem': 'PyPI'}, 'version': v} for n, v in packages]}).encode()
-    req = urllib.request.Request('https://api.osv.dev/v1/querybatch', data=body, headers={'Content-Type': 'application/json'})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r: results = json.loads(r.read())['results']
-    except Exception as e:
-        return [], f'OSV 查询失败：{e}'
     found = []
-    for (name, version), res in zip(packages, results):
-        for v in res.get('vulns', []): found.append({'package': name, 'version': version, 'id': v['id']})
-    fixed = _fixed_versions(found[:60], timeout)
+    for k in range(0, len(packages), OSV_BATCH):
+        chunk = packages[k:k + OSV_BATCH]
+        body = json.dumps({'queries': [{'package': {'name': n, 'ecosystem': eco}, 'version': v} for eco, n, v in chunk]}).encode()
+        req = urllib.request.Request('https://api.osv.dev/v1/querybatch', data=body, headers={'Content-Type': 'application/json'})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r: results = json.loads(r.read())['results']
+        except Exception as e:
+            return [], f'OSV 查询失败：{e}'
+        for (eco, name, version), res in zip(chunk, results):
+            for v in res.get('vulns', []): found.append({'ecosystem': eco, 'package': name, 'version': version, 'id': v['id']})
+    fixed = _fixed_versions(found[:80], timeout)
     for v in found: v['fixed'] = fixed.get(v['id'], {}).get(norm(v['package']))
     return found, None
 
 
 def _version_key(v):
-    return tuple(int(x) if x.isdigit() else 0 for x in re.split(r'[.\-+]', v))
+    return tuple(int(x) for x in re.findall(r'\d+', v))
 
 
 def _fixed_versions(vulns, timeout):
@@ -209,7 +200,8 @@ def _fixed_versions(vulns, timeout):
 
 def analyze(path, check_vulnerabilities=False):
     root = Path(path).expanduser().resolve()
-    files, truncated = python_files(root)
+    all_files, truncated = code_files(root)
+    files = [f for f in all_files if f.suffix == '.py']
     base = root if root.is_dir() else root.parent
     imports, graph, commands, errors, local_names, extra_paths = scan_imports(files, base)
     dist_map = md.packages_distributions()
@@ -236,11 +228,15 @@ def analyze(path, check_vulnerabilities=False):
     undeclared = [e for e in third_party if manifests and e['declared'] is False]
     unused_declared = sorted(declared - used_dists) if manifests else []
     tools = [{'command': c, 'found_on_path': bool(shutil.which(c)), 'used_at': sorted(locs)[:5]} for c, locs in sorted(commands.items())]
+    eco, eco_packages = ecosystems.analyze(root, base, all_files)
     vulns, vuln_error = [], None
     if check_vulnerabilities:
-        vulns, vuln_error = osv_vulnerabilities(sorted({(e['distribution'], e['version']) for e in third_party if e['distribution'] and e['version']}))
-    return {'path': str(root), 'python_files': len(files), 'truncated': truncated, 'manifests': manifests, 'third_party': third_party, 'extra_sys_paths': extra_paths,
+        packages = sorted({('PyPI', e['distribution'], e['version']) for e in third_party if e['distribution'] and e['version']}) + eco_packages
+        vulns, vuln_error = osv_vulnerabilities(packages)
+    languages = Counter(DISPLAY[language_of(f)] for f in all_files)
+    return {'path': str(root), 'code_files': len(all_files), 'languages': dict(languages.most_common()), 'python_files': len(files),
+            'truncated': truncated, 'manifests': manifests, 'third_party': third_party, 'extra_sys_paths': extra_paths,
             'missing': missing, 'undeclared': undeclared, 'unused_declared': unused_declared,
             'internal_graph': {k: sorted(v) for k, v in graph.items() if v}, 'cycles': find_cycles(graph),
-            'external_tools': tools, 'node': node_dependencies(base), 'syntax_errors': errors,
+            'external_tools': tools, 'ecosystems': eco, 'syntax_errors': errors,
             'vulnerabilities': vulns, 'vulnerability_check': ('未执行' if not check_vulnerabilities else vuln_error or '已查询 OSV')}

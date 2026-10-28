@@ -11,14 +11,14 @@ CODE_PATH_RE = re.compile(r'`((?:scripts|references|assets|agents)/[^`\s]+)`')
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'site-packages'}
 
 
-def walk_files(root, suffixes=None, limit=None):
+def walk_files(root, suffixes=None, limit=None, skip_dirs=SKIP_DIRS):
     """遍历 root 下的文件，返回 (文件列表, 是否因 limit 截断)。
-    SKIP_DIRS 只对 root 以下的目录生效：目标本身位于 site-packages 里时照样扫描。"""
+    skip_dirs 只对 root 以下的目录生效：目标本身位于 site-packages 里时照样扫描。"""
     root = Path(root)
     if root.is_file(): return ([root] if not suffixes or root.suffix in suffixes else []), False
     out = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        dirnames[:] = sorted(d for d in dirnames if d not in skip_dirs)
         for name in sorted(filenames):
             if suffixes and Path(name).suffix not in suffixes: continue
             out.append(Path(dirpath)/name)

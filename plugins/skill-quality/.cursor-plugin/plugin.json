@@ -1,7 +1,7 @@
 {
   "name": "skill-quality",
-  "version": "1.1.1",
-  "description": "Check Agent Skills (SKILL.md structure, broken links), dependencies (missing, undeclared, OSV vulnerabilities), bugs and code quality with SonarQube-style ratings, plus optional SonarQube / SonarCloud. Agent Skills 结构检查 + 依赖分析 + Bug 检测 + 代码质量评级。",
+  "version": "1.2.0",
+  "description": "Check Agent Skills (SKILL.md structure, broken links), dependencies (missing, undeclared, OSV vulnerabilities), bugs and code quality with SonarQube-style ratings for Python, JS/TS, React, Vue, Java/Spring, Kotlin, Go, C# and PHP, plus optional SonarQube / SonarCloud. Agent Skills 结构检查 + 多语言依赖分析 + Bug 检测 + 代码质量评级。",
   "author": {
     "name": "LoveMuZiLi",
     "url": "https://github.com/LoveMuZiLi"

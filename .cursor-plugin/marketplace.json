@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Agent Skills、依赖、SonarQube 与代码质量一站式检查",
-    "version": "1.1.1"
+    "version": "1.2.0"
   },
   "plugins": [
     {

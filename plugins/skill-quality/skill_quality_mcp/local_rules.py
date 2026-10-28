@@ -1,8 +1,8 @@
 """本地代码质量扫描（无 SonarQube 服务时的兜底）。
 
-规则仿照 SonarQube 的 Python 规则编写，rule 字段带 python:Sxxxx 的表示"近似对应该 Sonar 规则"，
-local: 开头的是本 MCP 自己的规则。评级口径按 SonarQube：可靠性/安全性看最严重的 Bug/漏洞，
-可维护性看技术债比例（债务分钟 ÷ 代码行数×30分钟）。
+Python 用 ast 语法树检查；JavaScript / TypeScript / React / Vue / Java / Go 等其他语言的规则在 multi_lang.py。
+rule 字段带语言前缀（python:Sxxxx、java:Sxxxx）的表示"近似对应该 Sonar 规则"，local: 开头的是本 MCP 自己的规则。
+评级口径按 SonarQube：可靠性/安全性看最严重的 Bug/漏洞，可维护性看技术债比例（债务分钟 ÷ 代码行数×30分钟）。
 """
 import ast
 import hashlib
@@ -13,13 +13,24 @@ import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from .deps import python_files
+from . import multi_lang
+from .languages import (COGNITIVE_MAX, DISPLAY, FUNCTION_LINES_MAX, JS_LANGS, LINE_MAX, PARAMS_MAX, SECRET_NAME, SFC_LANGS, TEST_PATH,
+                        code_files, is_compiled, language_of, load_source, plain_http)
 
 SEVERITIES = ['BLOCKER', 'CRITICAL', 'MAJOR', 'MINOR', 'INFO']
 DEBT_MINUTES = {'BLOCKER': 60, 'CRITICAL': 30, 'MAJOR': 15, 'MINOR': 5, 'INFO': 0}
-COGNITIVE_MAX, FUNCTION_LINES_MAX, PARAMS_MAX, LINE_MAX, DUP_WINDOW = 15, 100, 7, 160, 6
-SECRET_NAME = re.compile(r'(pass(word|wd)?|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)$', re.I)
-SAFE_HTTP = ('http://localhost', 'http://127.0.0.1', 'http://www.w3.org', 'http://schemas.', 'http://0.0.0.0')
+DUP_WINDOW = 6
+# 字符串内容已被抹掉，一串 'a', 'b' 这样的行会变得一模一样；token 太少的窗口不算重复代码
+DUP_MIN_TOKENS = 30
+DUP_TOKEN = re.compile(r'\w+|[^\w\s]')
+# 测试代码里故意出现的固定字符串、假密钥、http 地址、跳过证书校验、打印输出、超长的 describe 块不算问题
+TEST_EXEMPT_TYPES = {'VULNERABILITY', 'SECURITY_HOTSPOT'}
+TEST_EXEMPT_RULES = {'S1192', 'S2486', 'S6479', 'S106', 'S2629', 'S138', 'S104', 'local:console-log', 'local:swallowed-exception', 'local:debug-output'}
+
+
+def test_exempt(issue):
+    rule = issue['rule']
+    return issue['type'] in TEST_EXEMPT_TYPES or rule in TEST_EXEMPT_RULES or rule.split(':', 1)[-1] in TEST_EXEMPT_RULES
 
 
 def cognitive_complexity(fn):
@@ -161,7 +172,7 @@ class FileChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Constant(self, node):
-        if isinstance(node.value, str) and node.value.startswith('http://') and not node.value.startswith(SAFE_HTTP):
+        if isinstance(node.value, str) and plain_http(node.value):
             self.add('SECURITY_HOTSPOT', 'MINOR', 'python:S5332', f'明文 HTTP 地址：{node.value[:60]}', node.lineno)
 
     def check_unused_imports(self, module):
@@ -241,10 +252,18 @@ def duplication(texts):
         total += len(lines)
         for k in range(len(lines) - DUP_WINDOW + 1):
             chunk = lines[k:k + DUP_WINDOW]
-            windows[hashlib.md5('\n'.join(l for _, l in chunk).encode()).hexdigest()].append((rel, [i for i, _ in chunk]))
+            joined = '\n'.join(l for _, l in chunk)
+            if len(DUP_TOKEN.findall(joined)) < DUP_MIN_TOKENS: continue
+            windows[hashlib.md5(joined.encode()).hexdigest()].append((rel, [i for i, _ in chunk]))
     # 同一段重复代码会被相邻的滑动窗口命中多次：起点都顺移的窗口合并成一个行区间
     runs = []
     for locs in windows.values():
+        if len(locs) < 2: continue
+        # 连续相同的行会让同一文件里相互重叠的窗口彼此匹配，这不算重复代码
+        kept = []
+        for rel, nums in locs:
+            if not any(r == rel and nums[0] <= k[-1] for r, k in kept): kept.append((rel, nums))
+        locs = kept
         if len(locs) < 2: continue
         for rel, nums in locs: dup_lines |= {(rel, n) for n in nums}
         key = tuple(rel for rel, _ in locs)
@@ -264,26 +283,59 @@ def rating_by_worst(items):
     return 'A' if worst is None else {4: 'A', 3: 'B', 2: 'C', 1: 'D', 0: 'E'}[worst]
 
 
-def scan(path, use_ruff=True):
+def scan_python(f, text, rel):
+    """一个 .py 文件 → (问题列表, 代码行数, 函数个数)。"""
+    ncloc = sum(1 for l in text.splitlines() if l.strip() and not l.strip().startswith('#'))
+    try: tree = ast.parse(text, str(f))
+    except SyntaxError as e:
+        return [{'type': 'BUG', 'severity': 'BLOCKER', 'rule': 'python:syntax', 'message': f'语法错误：{e.msg}', 'file': rel, 'line': e.lineno}], ncloc, 0
+    checker = FileChecker(f, text, rel); checker.visit(tree)
+    issues = checker.issues + duplicated_strings(tree, rel)
+    functions = sum(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) for n in ast.walk(tree))
+    long_lines = [i for i, l in enumerate(text.splitlines(), 1) if len(l) > LINE_MAX]
+    if long_lines: issues.append({'type': 'CODE_SMELL', 'severity': 'MINOR', 'rule': 'python:S103', 'file': rel, 'line': long_lines[0],
+                                  'message': f'{len(long_lines)} 行超过 {LINE_MAX} 字符'})
+    todos = [i for i, l in enumerate(text.splitlines(), 1) if re.search(r'#\s*(TODO|FIXME|XXX)\b', l)]
+    if todos: issues.append({'type': 'CODE_SMELL', 'severity': 'INFO', 'rule': 'python:S1135', 'file': rel, 'line': todos[0],
+                             'message': f'{len(todos)} 处 TODO/FIXME 未处理'})
+    return issues, ncloc, functions
+
+
+def external_linters(root, base, by_lang):
+    """合并项目自己装的检查器：ruff（Python）、ESLint（JS/TS/Vue）、go vet（Go）。返回 (问题, 状态说明)。"""
+    issues, notes = [], []
+    if by_lang.get('python'):
+        ruff = ruff_issues(root, base)
+        issues += ruff or []
+        notes.append('ruff 已合并' if ruff is not None else '未安装 ruff（pip install ruff 可增加 800+ 条 Python 规则）')
+    js_files = [f for lang in (*JS_LANGS, *SFC_LANGS) for f in by_lang.get(lang, [])]
+    for found, note in (multi_lang.eslint_issues(root, base, js_files), multi_lang.go_vet_issues(root, base, by_lang.get('go', []))):
+        issues += found or []
+        if note: notes.append(note)
+    return issues, '；'.join(notes) or '无可用的外部检查器'
+
+
+def scan(path, use_linters=True):
     root = Path(path).expanduser().resolve(); base = root if root.is_dir() else root.parent
-    (files, truncated), issues, texts, ncloc, functions = python_files(root), [], {}, 0, 0
+    (files, truncated), issues, texts, ncloc, functions = code_files(root), [], {}, 0, 0
+    compiled = {f for f in files if is_compiled(f)}
+    files = [f for f in files if f not in compiled]
+    by_lang, test_files = defaultdict(list), 0
     for f in files:
-        rel = str(f.relative_to(base)); text = f.read_text(encoding='utf-8', errors='replace'); texts[rel] = text
-        ncloc += sum(1 for l in text.splitlines() if l.strip() and not l.strip().startswith('#'))
-        try: tree = ast.parse(text, str(f))
-        except SyntaxError as e:
-            issues.append({'type': 'BUG', 'severity': 'BLOCKER', 'rule': 'python:syntax', 'message': f'语法错误：{e.msg}', 'file': rel, 'line': e.lineno}); continue
-        checker = FileChecker(f, text, rel); checker.visit(tree); issues += checker.issues
-        issues += duplicated_strings(tree, rel)
-        functions += sum(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) for n in ast.walk(tree))
-        long_lines = [i for i, l in enumerate(text.splitlines(), 1) if len(l) > LINE_MAX]
-        if long_lines: issues.append({'type': 'CODE_SMELL', 'severity': 'MINOR', 'rule': 'python:S103', 'file': rel, 'line': long_lines[0],
-                                      'message': f'{len(long_lines)} 行超过 {LINE_MAX} 字符'})
-        todos = [i for i, l in enumerate(text.splitlines(), 1) if re.search(r'#\s*(TODO|FIXME|XXX)\b', l)]
-        if todos: issues.append({'type': 'CODE_SMELL', 'severity': 'INFO', 'rule': 'python:S1135', 'file': rel, 'line': todos[0],
-                                 'message': f'{len(todos)} 处 TODO/FIXME 未处理'})
-    ruff = ruff_issues(root, base) if use_ruff and files else None
-    if ruff: issues += ruff
+        lang = language_of(f); by_lang[lang].append(f)
+        rel = str(f.relative_to(base))
+        if lang == 'python':
+            text = f.read_text(encoding='utf-8', errors='replace'); texts[rel] = text
+            found, lines, funcs = scan_python(f, text, rel)
+        else:
+            found, lines, funcs, texts[rel] = multi_lang.scan_source(load_source(f), rel)
+        if TEST_PATH.search(rel):
+            test_files += 1; found = [i for i in found if not test_exempt(i)]; texts.pop(rel, None)
+        issues += found; ncloc += lines; functions += funcs
+    config, config_files = multi_lang.config_issues(root, base) if root.is_dir() else ([], 0)
+    issues += config
+    linter_issues, linters = external_linters(root, base, by_lang) if use_linters and files else ([], '未启用' if not use_linters else '无代码文件')
+    issues += linter_issues
     seen, unique = set(), []
     for i in issues:
         key = (i['file'], i['line'], i['rule'])
@@ -294,9 +346,11 @@ def scan(path, use_ruff=True):
     debt = sum(DEBT_MINUTES[i['severity']] for i in by_type('CODE_SMELL'))
     ratio = debt / (ncloc * 30) if ncloc else 0
     maint = next(r for r, limit in [('A', .05), ('B', .1), ('C', .2), ('D', .5), ('E', 9e9)] if ratio <= limit)
-    return {'path': str(root), 'files': len(files), 'truncated': truncated, 'ncloc': ncloc, 'functions': functions, 'issues': issues,
+    languages = Counter({DISPLAY[lang]: len(fs) for lang, fs in by_lang.items()})
+    return {'path': str(root), 'files': len(files), 'test_files': test_files, 'compiled_skipped': len(compiled), 'truncated': truncated, 'languages': dict(languages.most_common()),
+            'config_files': config_files,
+            'ncloc': ncloc, 'functions': functions, 'issues': issues,
             'counts': {t: len(by_type(t)) for t in ('BUG', 'VULNERABILITY', 'SECURITY_HOTSPOT', 'CODE_SMELL')},
             'ratings': {'reliability': rating_by_worst(by_type('BUG')), 'security': rating_by_worst(by_type('VULNERABILITY')), 'maintainability': maint},
             'technical_debt_minutes': debt, 'debt_ratio_percent': round(ratio * 100, 1),
-            'duplicated_lines_density': dup_density, 'duplicated_blocks': dup_blocks,
-            'ruff': 'ruff 已合并' if ruff is not None else ('未安装 ruff（pip install ruff 可增加 800+ 条规则）' if use_ruff else '未启用')}
+            'duplicated_lines_density': dup_density, 'duplicated_blocks': dup_blocks, 'linters': linters}

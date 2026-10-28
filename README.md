@@ -42,11 +42,11 @@
 
 ### 依赖分析
 
-- 第三方包：装没装、写没写进 `requirements.txt` / `pyproject.toml`
-- 声明了却没用到的包
-- 代码自己往 `sys.path` 塞的私有目录（换机器就失效）
-- 模块循环依赖、外部命令（ffmpeg、git…）是否在 PATH
-- **OSV 已知漏洞**，并给出建议升级的版本
+- **Python**：装没装、写没写进 `requirements.txt` / `pyproject.toml`，`sys.path` 私有目录、循环依赖
+- **npm**：缺失 / 没声明 / 没用到的包，支持 monorepo、`tsconfig` paths、Vite 别名，读 lock 文件版本
+- **Maven / Gradle**：属性、`dependencyManagement`、Spring Boot 父 POM、版本目录、重复声明
+- **Go modules / Composer / NuGet**：没写进 `go.mod` 的导入、vendor、`Directory.Packages.props`
+- **OSV 已知漏洞**（PyPI、npm、Maven、Go、Packagist、NuGet），并给出建议升级的版本
 
 </td>
 </tr>
@@ -55,10 +55,10 @@
 
 ### Bug 检测与代码质量
 
-- 28 条本地规则：Bug、漏洞、安全热点、代码异味
-- 认知复杂度、超长函数、重复代码、技术债
-- 按 SonarQube 口径给出 **A–E 评级**
-- 装了 [ruff](https://docs.astral.sh/ruff/) 会自动合并它的结果
+- 支持 **Python、JS / TS、React、Vue、Svelte、Java / Spring、Kotlin、Go、C#、PHP**
+- 70+ 条本地规则：Bug、漏洞、安全热点、代码异味，外加 Spring 配置和 MyBatis Mapper 检查
+- 认知复杂度、超长函数、重复代码、技术债，按 SonarQube 口径给出 **A–E 评级**
+- 项目里装了 [ESLint](https://eslint.org/)、[ruff](https://docs.astral.sh/ruff/)、go 时自动合并 ESLint / ruff / go vet 的结果
 
 </td>
 <td width="50%" valign="top">
@@ -82,7 +82,7 @@ flowchart LR
     S --> M(("skill-quality<br/>MCP 服务"))
     M --> A["Skills 结构检查"]
     M --> B["依赖分析 + OSV 漏洞库"]
-    M --> C["本地 Bug / 质量扫描<br/>（+ ruff）"]
+    M --> C["本地 Bug / 质量扫描<br/>（+ ESLint / ruff / go vet）"]
     M --> D["SonarQube API<br/>（可选）"]
     A & B & C & D --> R["一份 Markdown 报告<br/>通过 / 有警告 / 未通过"]
 ```
@@ -228,13 +228,21 @@ pip install git+https://github.com/LoveMuZiLi/skill-quality-mcp
 <details>
 <summary><b>本地检测规则一览</b>（规则 ID 近似对应 SonarQube 同名规则）</summary>
 
-| 类别 | 规则 |
+所有语言共用：认知复杂度 > 15（S3776）、超长函数（S138，JS/TS 200 行，其他 100 行）、参数 > 7 个（S107）、超长文件（S104）、硬编码密钥（S2068）、SQL 拼接（S2077）、明文 HTTP（S5332）、重复字符串（S1192）、空 catch（S2486）、自赋值（S1656）、两侧相同的表达式（S1764）、未用的 import（S1128）、超长行（S103）、TODO（S1135）、重复代码。
+
+| 语言 | 专有规则 |
 | --- | --- |
-| Bug | 不可达代码（S1763）、`finally` 里 return（S1143）、`is` 比较字面量（S5795）、assert 元组（S5905）、自赋值（S1656）、两侧相同的比较（S1764）、重复定义、可变默认参数 |
-| 漏洞 | 硬编码密钥（S2068）、关闭证书校验（S4830）、不安全的 `yaml.load` |
-| 安全热点 | `eval` / `exec`（S1523）、`os.system` / `shell=True`（S4721）、`pickle.load`、明文 HTTP（S5332） |
-| 代码异味 | 认知复杂度 > 15（S3776）、函数 > 100 行（S138）、参数 > 7 个（S107）、裸 except（S5754）、静默吞异常、`== None`、未用的 import（S1128）和变量（S1481）、重复字符串（S1192）、无占位符的 f-string（S3457）、`open()` 不指定编码、超长行（S103）、TODO（S1135） |
-| 度量 | 重复代码密度、技术债、可靠性 / 安全性 / 可维护性评级 |
+| Python | 不可达代码、`finally` 里 return、`is` 比较字面量、assert 元组、裸 except、`== None`、可变默认参数、重复定义、未用变量、f-string 无占位符、`open()` 不指定编码、`yaml.load` / `pickle.load`、`verify=False` |
+| JavaScript / TypeScript | `eval` / `new Function`、`debugger`、`var`、`==`、`innerHTML` / `document.write` XSS、`rejectUnauthorized: false`、弱哈希 / 弱加密、`child_process`、CORS `*`、空 `.catch()`、`console.log`、`any`、`@ts-ignore` |
+| React | Hook 写在条件 / 循环里（S6440）、`useEffect(async …)`、直接改 `this.state`、`key={index}`、`map` 生成的元素没有 key、`dangerouslySetInnerHTML`、`target="_blank"` 没加 `rel`、`<img>` 缺 alt |
+| Vue / Svelte | `v-html` / `{@html}`、`v-for` 没有 `:key`、下标做 key、`v-if` 与 `v-for` 同用、`data` 写成对象 |
+| Java / Spring | `System.out`、`printStackTrace`、catch `Throwable`、字符串 `==`、`new BigDecimal(double)`、static `SimpleDateFormat`、`@Transactional` 加在 private 方法、字段注入、日志字符串拼接、反序列化、空的 `checkServerTrusted`、MD5 / DES / ECB、`Runtime.exec`、`@CrossOrigin("*")`；`application.yml` 明文密码、MyBatis `${}` 注入 |
+| Kotlin | `!!` 非空断言，以及 JVM 通用的加密 / 命令执行 / CORS 规则 |
+| Go | `InsecureSkipVerify`、md5 / sha1、`exec.Command`、DES / RC4 |
+| C# | 证书回调返回 true、MD5 / SHA1 / DES、`Process.Start`、`BinaryFormatter`、`async void`、`AllowAnyOrigin`；`appsettings.json` 明文密码 |
+| PHP | `eval`、`exec` / `system`、`unserialize`、`md5`、`var_dump`、`mysql_*`、`echo $_GET` XSS、关闭 cURL 证书校验 |
+
+测试文件不报安全类问题、重复字符串和超长函数，也不计入重复率；`dist`、`build`、`target`、`vendor`、`node_modules` 和带 sourcemap 的编译产物不扫描。
 
 </details>
 
@@ -297,7 +305,7 @@ ln -s "$(command -v python3)" ~/.local/bin/python
 <details>
 <summary><b>本地规则和 SonarQube 结果有什么区别？</b></summary>
 
-本地规则只覆盖 Python，是 SonarQube 同名规则的近似实现，适合没有 SonarQube 时快速自查。配置了 SonarQube 后，报告会同时列出两边的结果，以 SonarQube 为准。其他语言请用 SonarQube。
+本地规则是 SonarQube 同名规则的近似实现（Python 用语法树，其他语言用词法分析加模式匹配），覆盖日常前后端技术栈，适合没有 SonarQube 时快速自查，不需要装任何额外工具。配置了 SonarQube 后，报告会同时列出两边的结果，以 SonarQube 为准。想要更全的规则，在项目里装好 ESLint 并写好配置，会自动合并它的结果。
 
 </details>
 
@@ -329,7 +337,7 @@ skill-quality-mcp/
 
 ## English
 
-**Skill Quality MCP** is an MCP server bundled with an Agent Skill, packaged as both a **Cursor plugin** and a **Codex plugin**. It checks Agent Skills (frontmatter, broken links and anchors, missing referenced files), analyzes dependencies (missing / undeclared / unused packages, OSV vulnerabilities with fix versions), runs 28 local bug and code-quality rules with SonarQube-style A–E ratings, and optionally pulls issues, metrics and quality gates from SonarQube / SonarCloud.
+**Skill Quality MCP** is an MCP server bundled with an Agent Skill, packaged as both a **Cursor plugin** and a **Codex plugin**. It checks Agent Skills (frontmatter, broken links and anchors, missing referenced files), analyzes dependencies for Python, npm, Maven, Gradle, Go modules, Composer and NuGet (missing / undeclared / unused packages, OSV vulnerabilities with fix versions), runs 70+ local bug and code-quality rules for Python, JavaScript / TypeScript, React, Vue, Svelte, Java / Spring, Kotlin, Go, C# and PHP with SonarQube-style A–E ratings (merging ESLint, ruff and go vet results when available), and optionally pulls issues, metrics and quality gates from SonarQube / SonarCloud.
 
 ```bash
 # Windows

@@ -28,7 +28,7 @@ def compact_dir(p):
     return re.sub(r'([\\/])([0-9a-f]{7})[0-9a-f]{25,}(?=[\\/]|$)', r'\1\2…', short_path(p))
 
 
-def short_rule(rule): return (rule or '').removeprefix('python:')
+def short_rule(rule): return re.sub(r'^(?:python|javascript|typescript|java|kotlin|go|csharpsquid|php|web):', '', rule or '')
 
 
 # 安全热点用 HIGH / MEDIUM / LOW 表示风险，排序时并入同一刻度
@@ -93,15 +93,83 @@ def _package_line(e, has_manifest, full):
 def norm_name(n): return n.lower().replace('_', '-')
 
 
+def language_counts(langs): return '、'.join(f'{k} {v}' for k, v in (langs or {}).items()) or '无'
+
+
+def names(items, full, width=12):
+    items = list(items)
+    shown = items if full else items[:width]
+    return '、'.join(shown) + (f' 等 {len(items)} 个' if len(shown) < len(items) else '')
+
+
 def deps_section(d, limit=BRIEF_LIMIT):
     full = limit is None
     out = ['## 依赖']
-    scope = f"{d['python_files']} 个 .py" + ('（**达到文件上限，后面的未扫描**）' if d.get('truncated') else '')
-    out.append(f"{scope}；依赖清单：{'、'.join(d['manifests']) or '**无**（建议加 requirements.txt）'}")
+    out.append(f"{d['code_files']} 个代码文件（{language_counts(d.get('languages'))}）" + ('（**达到文件上限，后面的未扫描**）' if d.get('truncated') else ''))
+    eco = d.get('ecosystems') or {}
+    if d['python_files'] or d['manifests']: out += _python_lines(d, full)
+    for p in eco.get('npm', []): out.append(_npm_line(p, full))
+    for kind, label in (('maven', 'Maven'), ('gradle', 'Gradle')):
+        if eco.get(kind): out.append(_jvm_line(eco[kind], label, full))
+    for m in eco.get('go', []): out.append(_go_line(m, full))
+    for c in eco.get('composer', []):
+        out.append(f"**Composer**（`{c['file']}`）：声明 {c['declared']} 个；vendor {'有' if c['vendor'] else '**没有**（先 composer install）'}；"
+                   f"composer.lock {'有' if c['lockfile'] else '**无**（查不了漏洞）'}" + (f"；**缺失**：{names(c['missing'], full)}" if c['missing'] else ''))
+    if eco.get('nuget'):
+        refs = {k: v for n in eco['nuget'] for k, v in n['versions'].items()}
+        out.append(f"**NuGet**（{len(eco['nuget'])} 个 .csproj）：PackageReference {len(refs)} 个"
+                   + (f"；版本：{names((f'{k} {v or chr(63)}' for k, v in sorted(refs.items())), full)}" if full else ''))
+    if not (d['python_files'] or d['manifests'] or eco):
+        out.append('依赖清单：**无**（没有 requirements.txt、package.json、pom.xml、go.mod 等）')
+    out.append(_vuln_lines(d, full))
+    return '\n\n'.join(out) + '\n'
+
+
+def _npm_line(p, full):
+    where = 'package.json' if p['dir'] == '.' else f"{p['dir']}/package.json"
+    line = (f"**npm**（`{where}`）：声明 {p['declared']} 个（开发 {p['dev']}）；node_modules "
+            + ('有' if p['node_modules'] else '**没有**（先 npm install，未安装时不判缺失）')
+            + f"；锁文件 {p['lockfile'] or '**无**（版本不固定，查不了漏洞）'}")
+    if p['missing']: line += f"；**缺失（未安装）**：{names(p['missing'], full)}"
+    if p.get('missing_dev'):
+        line += f"；开发依赖未安装 {len(p['missing_dev'])} 个（像是 --omit=dev / 生产环境安装，不影响运行）" + (f"：{names(p['missing_dev'], True)}" if full else '')
+    if p['undeclared']:
+        line += '；**用了没声明**：' + '、'.join(f"{u['package']}（{u['files'][0]}）" for u in (p['undeclared'] if full else p['undeclared'][:8]))
+        if not full and len(p['undeclared']) > 8: line += f" 等 {len(p['undeclared'])} 个"
+    if p['unused']: line += f"；可能没用到（源码、样式、配置里都没出现）：{names(p['unused'], full)}"
+    if full: line += '；版本：' + ('、'.join(f'{k} {v or "?"}' for k, v in p['versions'].items()) or '无')
+    return line
+
+
+def _jvm_line(mods, label, full):
+    deps = [dep for m in mods for dep in m['deps']]
+    managed = sum(1 for dep in deps if dep['managed'] and dep['version'] is None)
+    unresolved = sum(1 for dep in deps if not dep['managed'] and dep['version'] is None)
+    dups = sorted({x for m in mods for x in m['duplicates']})
+    line = f"**{label}**（{len(mods)} 个构建文件）：依赖 {len(deps)} 个"
+    if managed: line += f"，{managed} 个版本由父 POM / BOM / 插件管理（查不了漏洞）"
+    if unresolved: line += f"，{unresolved} 个版本号是变量且没解析出来"
+    if dups: line += f"；**重复声明**：{names(dups, full)}"
+    if full:
+        line += ''.join(f"\n- `{m['file']}`：" + ('、'.join(f"{dep['name']} {dep['version'] or '?'}" for dep in m['deps']) or '无依赖') for m in mods)
+    return line
+
+
+def _go_line(m, full):
+    direct = [r for r, i in m['requires'].items() if not i['indirect']]
+    line = f"**Go**（`{m['file']}`，module {m['module'] or '?'}）：直接依赖 {len(direct)} 个、间接 {len(m['requires']) - len(direct)} 个"
+    if m['undeclared']: line += '；**用了没声明（go build 会失败）**：' + names((u['package'] for u in m['undeclared']), full)
+    if m['unused']: line += f"；可能没用到（go mod tidy 确认）：{names(m['unused'], full)}"
+    if full: line += '；版本：' + '、'.join(f"{r} {i['version']}" for r, i in m['requires'].items())
+    return line
+
+
+def _python_lines(d, full):
+    out = [f"**Python**：{d['python_files']} 个 .py；依赖清单：{'、'.join(d['manifests']) or '**无**（建议加 requirements.txt）'}"]
     has_manifest = bool(d['manifests'])
     if d['third_party']:
         out.append(f"第三方包 {len(d['third_party'])} 个：" + '；'.join(_package_line(e, has_manifest, full) for e in d['third_party']))
-    else:
+    elif d['python_files']:
         out.append('第三方包：无')
     if d.get('extra_sys_paths'):
         out.append('代码往 sys.path 加了：' + '；'.join(f'`{p}`' + ('' if os.path.isdir(p) else '（**目录不存在**）') for p in d['extra_sys_paths'])
@@ -115,12 +183,7 @@ def deps_section(d, limit=BRIEF_LIMIT):
         ok = [t['command'] for t in d['external_tools'] if t['found_on_path']]
         bad = [t['command'] for t in d['external_tools'] if not t['found_on_path']]
         out.append('外部命令：' + '；'.join(([f"{'、'.join(ok)} 在 PATH"] if ok else []) + ([f"**{'、'.join(bad)} 不在 PATH**"] if bad else [])))
-    if d['node']:
-        n = d['node']
-        out.append(f"Node 依赖 {len(n['declared'])} 个，node_modules {'存在' if n['node_modules_present'] else '**不存在**'}"
-                   + (f"，缺失：{'、'.join(n['missing'])}" if n['missing'] else ''))
-    out.append(_vuln_lines(d, full))
-    return '\n\n'.join(out) + '\n'
+    return out
 
 
 def _vuln_lines(d, full):
@@ -129,25 +192,29 @@ def _vuln_lines(d, full):
     if not vulns: return '已知漏洞（OSV）：未发现'
     from .deps import _version_key
     groups = {}
-    for v in vulns: groups.setdefault((v['package'], v['version']), []).append(v)
+    for v in vulns: groups.setdefault((v.get('ecosystem', 'PyPI'), v['package'], v['version']), []).append(v)
     lines = [f'**已知漏洞（OSV）{len(vulns)} 个**：']
-    for (pkg, ver), vs in groups.items():
+    for (eco, pkg, ver), vs in groups.items():
         fixes = [v['fixed'] for v in vs if v.get('fixed')]
         target = f'≥ {max(fixes, key=_version_key)}' if fixes else '最新版'
         ids = [v['id'] for v in vs]
         shown = ids if full else ids[:3]
-        lines.append(f"- {pkg} {ver}：{len(vs)} 个，升级到 {target}（{', '.join(shown)}{' 等' if len(shown) < len(ids) else ''}）")
+        lines.append(f"- [{eco}] {pkg} {ver}：{len(vs)} 个，升级到 {target}（{', '.join(shown)}{' 等' if len(shown) < len(ids) else ''}）")
     return '\n'.join(lines)
 
 
 def local_section(q, limit=BRIEF_LIMIT):
     c, r = q['counts'], q['ratings']
-    scope = f"{q['files']} 个文件" + ('（**达到文件上限，后面的未扫描**）' if q.get('truncated') else '')
+    scope = f"{q['files']} 个代码文件（{language_counts(q.get('languages'))}）" + ('（**达到文件上限，后面的未扫描**）' if q.get('truncated') else '')
+    if q.get('config_files'): scope += f"、{q['config_files']} 个配置/Mapper 文件"
+    if q.get('test_files'): scope += f"；其中 {q['test_files']} 个测试文件不报安全类问题和重复字符串"
+    if q.get('compiled_skipped'): scope += f"；跳过 {q['compiled_skipped']} 个带 sourcemap 的编译产物"
     out = ['## 代码质量（本地规则）\n',
            f"评级：可靠性 {r['reliability']}｜安全性 {r['security']}｜可维护性 {r['maintainability']}；"
            f"Bug {c['BUG']}、漏洞 {c['VULNERABILITY']}、热点 {c['SECURITY_HOTSPOT']}、异味 {c['CODE_SMELL']}",
-           f"{scope}、{q['ncloc']} 行、{q['functions']} 个函数；重复 {q['duplicated_lines_density']}%；"
-           f"技术债 {q['technical_debt_minutes']} 分钟（{q['debt_ratio_percent']}%）；{q['ruff']}\n"]
+           f"{scope}；{q['ncloc']} 行、{q['functions']} 个函数；重复 {q['duplicated_lines_density']}%；"
+           f"技术债 {q['technical_debt_minutes']} 分钟（{q['debt_ratio_percent']}%）",
+           f"外部检查器：{q['linters']}\n"]
     blocks = q['duplicated_blocks']
     if blocks:
         shown = blocks if limit is None else blocks[:3]
@@ -193,7 +260,15 @@ def verdict(skill, deps, local, sonar):
         if any(i['severity'] == 'MAJOR' for i in skill['issues']): warnings.append('Skill 有失效链接或超长等问题')
     if deps['missing']: blockers.append(f"缺失依赖 {len(deps['missing'])} 个")
     if deps['vulnerabilities']: blockers.append(f"依赖有 {len(deps['vulnerabilities'])} 个已知漏洞")
-    if deps['undeclared'] or not deps['manifests'] and deps['third_party']: warnings.append('依赖未完整声明')
+    eco = deps.get('ecosystems') or {}
+    npm, go, composer = eco.get('npm', []), eco.get('go', []), eco.get('composer', [])
+    missing = sum(len(p['missing']) for p in npm) + sum(len(c['missing']) for c in composer)
+    if missing: blockers.append(f'Node / Composer 依赖缺失 {missing} 个')
+    go_undeclared = sum(len(m['undeclared']) for m in go)
+    if go_undeclared: blockers.append(f'Go 有 {go_undeclared} 个导入没在 go.mod 声明')
+    if any(not p['node_modules'] and p['declared'] for p in npm): warnings.append('Node 依赖未安装（没有 node_modules）')
+    if deps['undeclared'] or not deps['manifests'] and deps['third_party'] or any(p['undeclared'] for p in npm): warnings.append('依赖未完整声明')
+    if any(m['duplicates'] for kind in ('maven', 'gradle') for m in eco.get(kind, [])): warnings.append('有重复声明的依赖')
     if deps['cycles']: warnings.append('存在模块循环依赖')
     serious = [i for i in local['issues'] if i['type'] in ('BUG', 'VULNERABILITY') and i['severity'] in ('BLOCKER', 'CRITICAL', 'MAJOR')]
     if serious: blockers.append(f'本地扫描发现 {len(serious)} 个严重 Bug/漏洞')

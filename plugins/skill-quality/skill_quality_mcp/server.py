@@ -27,7 +27,8 @@ mcp = MCPServer(
     name='skill-quality',
     version=__version__,
     instructions=(
-        '检查 Agent Skill 或代码目录的质量。要结论用 full_quality_report；只看某一项用 inspect_skill / analyze_dependencies / '
+        '检查 Agent Skill 或代码目录的质量（Python、JS/TS、React、Vue、Java、Kotlin、Go、C#、PHP）。'
+        '要结论用 full_quality_report；只看某一项用 inspect_skill / analyze_dependencies / '
         'code_quality_scan / sonar_*。默认返回简版：计数完整，问题按严重度只列前几条，完整报告写入文件并给出路径，'
         '需要全部明细时再读该文件或传 detail=true。target/path 可传技能名、技能目录或代码路径，优先绝对路径。'),
 )
@@ -133,19 +134,21 @@ def inspect_skill(skill: str, detail: bool = False) -> str:
 
 @tool(open_world=True)
 def analyze_dependencies(path: str, check_vulnerabilities: bool = False, detail: bool = False) -> str:
-    """依赖分析：第三方包是否安装/声明、未用的声明、循环依赖、外部命令是否在 PATH、package.json。
-    check_vulnerabilities：联网查 OSV 漏洞。detail：列出每个包的使用文件和全部漏洞编号。"""
+    """依赖分析：Python（requirements/pyproject）、npm（package.json，含 monorepo）、Maven、Gradle、Go modules、Composer、NuGet。
+    检查包装没装、用了没声明、声明了没用、重复声明、循环依赖、外部命令是否在 PATH。
+    check_vulnerabilities：联网查 OSV 漏洞（按锁文件 / 已装版本）。detail：列出每个包的版本、使用文件和全部漏洞编号。"""
     target, _, note = resolve_target(path)
     d = sq_deps.analyze(target, check_vulnerabilities)
     return note + brief_or_full(f'deps-{target.name}', sq_report.deps_section(d), sq_report.deps_section(d, None), detail)
 
 
 @tool
-def code_quality_scan(path: str, use_ruff: bool = True, max_issues: int = 30, detail: bool = False) -> str:
-    """本地 Bug 与代码质量扫描（无需 SonarQube）：Bug、漏洞、安全热点、异味、复杂度、重复、技术债，A–E 评级。
-    max_issues：简版列出的重要问题条数。detail：列出全部问题。"""
+def code_quality_scan(path: str, use_linters: bool = True, max_issues: int = 30, detail: bool = False) -> str:
+    """本地 Bug 与代码质量扫描（无需 SonarQube）：Python、JS/TS、React、Vue、Svelte、Java、Kotlin、Go、C#、PHP，
+    外加 Spring/.NET 配置里写死的密码和 MyBatis ${} 拼接；给出 Bug、漏洞、安全热点、异味、复杂度、重复、技术债和 A–E 评级。
+    use_linters：合并已装的 ruff、项目里的 ESLint（会加载项目的 ESLint 配置）、go vet。max_issues：简版列出的重要问题条数。detail：列出全部问题。"""
     target, _, note = resolve_target(path)
-    q = sq_local.scan(target, use_ruff)
+    q = sq_local.scan(target, use_linters)
     brief = sq_report.local_section(q, max(1, max_issues))
     return note + brief_or_full(f'quality-{target.name}', brief, sq_report.local_section(q, None), detail)
 
