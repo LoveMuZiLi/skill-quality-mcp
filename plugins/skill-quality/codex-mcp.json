@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "skill-quality": {
+      "command": "python",
+      "args": ["./server.py"],
+      "cwd": ".",
+      "env": { "PYTHONIOENCODING": "utf-8" },
+      "env_vars": [
+        "SONAR_HOST_URL", "SONAR_TOKEN", "SONAR_PROJECT_KEY", "SONAR_ORGANIZATION", "SONAR_SCANNER",
+        "SKILL_DIRS", "WORKSPACE_DIRS",
+        "PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "SYSTEMROOT", "TEMP", "TMP"
+      ],
+      "startup_timeout_sec": 120,
+      "tool_timeout_sec": 1800
+    }
+  }
+}

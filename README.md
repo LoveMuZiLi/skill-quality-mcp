@@ -143,6 +143,8 @@ codex plugin add skill-quality@skill-quality-mcp
 
 [![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=skill-quality&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyItLWZyb20iLCJnaXQraHR0cHM6Ly9naXRodWIuY29tL0xvdmVNdVppTGkvc2tpbGwtcXVhbGl0eS1tY3AiLCJza2lsbC1xdWFsaXR5LW1jcCJdfQ%3D%3D)
 
+[cursor.directory](https://cursor.directory/plugins/skill-quality-mcp) 的「添加到 Cursor」读的是仓库里的 `.mcp.json`，内容和上面这个按钮一样，都是 `uvx`。添加前先装好 [uv](https://docs.astral.sh/uv/)，并确认新开的终端里 `uvx --version` 能通过。Windows 上如果是 Cursor 已经打开之后才装的 uv，要完全退出 Cursor 再打开，否则仍然会报找不到 `uvx`。
+
 **方式三：手写 MCP 配置**（同样需要先装 [uv](https://docs.astral.sh/uv/)，命令行里能运行 `uvx --version`）
 
 打开 **Cursor Settings → MCP**，添加全局 MCP，或直接编辑配置文件：
@@ -351,13 +353,15 @@ ln -s "$(command -v python3)" ~/.local/bin/python
 
 ```text
 skill-quality-mcp/
+├── .mcp.json                            cursor.directory 仓库根目录安装配置（uvx）
 ├── .cursor-plugin/marketplace.json      Cursor 插件市场清单
 ├── .agents/plugins/marketplace.json     Codex 插件市场清单
 ├── plugins/skill-quality/
 │   ├── .cursor-plugin/plugin.json       Cursor 插件清单
 │   ├── .codex-plugin/plugin.json        Codex 插件清单
 │   ├── mcp.json                         Cursor 的 MCP 启动配置
-│   ├── .mcp.json                        Codex 的 MCP 启动配置
+│   ├── .mcp.json                        cursor.directory 读取的安装配置（uvx）
+│   ├── codex-mcp.json                   Codex 插件的本地启动配置
 │   ├── server.py                        启动入口（缺 mcp 时自动安装）
 │   ├── skill_quality_mcp/               MCP 服务源码
 │   └── skills/skill-quality/SKILL.md    教 Agent 何时、如何调用这些工具

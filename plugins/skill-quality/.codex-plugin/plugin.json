@@ -16,7 +16,7 @@
     "bug-detection"
   ],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
+  "mcpServers": "./codex-mcp.json",
   "interface": {
     "displayName": "Skill Quality",
     "shortDescription": "Skill、依赖、SonarQube、代码质量一站式检查",

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "skill-quality": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/LoveMuZiLi/skill-quality-mcp",
+        "skill-quality-mcp"
+      ],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
