@@ -143,6 +143,37 @@ codex plugin add skill-quality@skill-quality-mcp
 
 [![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=skill-quality&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyItLWZyb20iLCJnaXQraHR0cHM6Ly9naXRodWIuY29tL0xvdmVNdVppTGkvc2tpbGwtcXVhbGl0eS1tY3AiLCJza2lsbC1xdWFsaXR5LW1jcCJdfQ%3D%3D)
 
+**方式三：手写 MCP 配置**（同样需要先装 [uv](https://docs.astral.sh/uv/)，命令行里能运行 `uvx --version`）
+
+打开 **Cursor Settings → MCP**，添加全局 MCP，或直接编辑配置文件：
+
+| 系统 | 文件 |
+| --- | --- |
+| Windows | `%USERPROFILE%\.cursor\mcp.json` |
+| macOS / Linux | `~/.cursor/mcp.json` |
+
+把下面这段写入该文件。已有别的服务时，只把 `"skill-quality"` 这一段合并进现有的 `mcpServers`，不要整文件覆盖。
+
+```json
+{
+  "mcpServers": {
+    "skill-quality": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/LoveMuZiLi/skill-quality-mcp",
+        "skill-quality-mcp"
+      ]
+    }
+  }
+}
+```
+
+`uvx` 会从 GitHub 拉最新代码并启动，不用先 `pip install`。保存后在 MCP 面板里刷新 `skill-quality`。第一次启动要下载依赖，稍等即可。
+
+> [!NOTE]
+> 报错 `'uvx' 不是内部或外部命令`：本机还没装 uv，或 Cursor 是在安装 uv 之前打开的，没读到新的 PATH。先安装 uv，**完全退出 Cursor 再打开**。仍找不到时，把 `command` 改成 `uvx` 的绝对路径，例如 Windows：`C:\\Users\\你的用户名\\.local\\bin\\uvx.exe`。
+
 </details>
 
 <details>
@@ -346,6 +377,23 @@ irm https://raw.githubusercontent.com/LoveMuZiLi/skill-quality-mcp/main/install.
 curl -fsSL https://raw.githubusercontent.com/LoveMuZiLi/skill-quality-mcp/main/install.sh | bash
 # Codex only
 codex plugin marketplace add LoveMuZiLi/skill-quality-mcp && codex plugin add skill-quality@skill-quality-mcp
+```
+
+Cursor only, after [uv](https://docs.astral.sh/uv/) is installed (`uvx` must be on PATH; restart Cursor if it was already open). Put this in `%USERPROFILE%\.cursor\mcp.json` on Windows, or `~/.cursor/mcp.json` on macOS / Linux. Merge the `skill-quality` entry if the file already has other servers.
+
+```json
+{
+  "mcpServers": {
+    "skill-quality": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/LoveMuZiLi/skill-quality-mcp",
+        "skill-quality-mcp"
+      ]
+    }
+  }
+}
 ```
 
 ## License
