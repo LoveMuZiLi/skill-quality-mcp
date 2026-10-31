@@ -14,7 +14,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from . import multi_lang
-from .languages import (COGNITIVE_MAX, DISPLAY, FUNCTION_LINES_MAX, JS_LANGS, LINE_MAX, PARAMS_MAX, SECRET_NAME, SFC_LANGS, TEST_PATH,
+from .languages import (CODE_SKIP_DIRS, COGNITIVE_MAX, DISPLAY, EXTRA_SOURCE, FUNCTION_LINES_MAX, GENERATED, JS_LANGS, LINE_MAX,
+                        MAX_FILE_BYTES, NON_CODE_EXT, PARAMS_MAX, SECRET_NAME, SFC_LANGS, TEST_PATH,
                         code_files, is_compiled, language_of, load_source, plain_http)
 
 SEVERITIES = ['BLOCKER', 'CRITICAL', 'MAJOR', 'MINOR', 'INFO']
@@ -227,10 +228,11 @@ def duplicated_strings(tree, rel):
              'message': f'字符串 “{s[:40]}” 重复出现 {c} 次，提成常量'} for s, c in counts.items() if c >= 3]
 
 
-def ruff_issues(path, base):
+def ruff_issues(path, base, files=None):
     exe = shutil.which('ruff')
     if not exe: return None
-    r = subprocess.run([exe, 'check', '--output-format', 'json', '--exit-zero', str(path)], capture_output=True, text=True, encoding='utf-8')
+    targets = [str(f) for f in files] if files else [str(path)]
+    r = subprocess.run([exe, 'check', '--output-format', 'json', '--exit-zero', *targets], capture_output=True, text=True, encoding='utf-8')
     try: data = json.loads(r.stdout or '[]')
     except json.JSONDecodeError: return None
     bug_codes = {'F821', 'F811', 'F823', 'F601', 'F632', 'B006', 'B008', 'E999', 'PLE'}
@@ -301,25 +303,168 @@ def scan_python(f, text, rel):
     return issues, ncloc, functions
 
 
-def external_linters(root, base, by_lang):
-    """合并项目自己装的检查器：ruff（Python）、ESLint（JS/TS/Vue）、go vet（Go）。返回 (问题, 状态说明)。"""
+def external_linters(root, base, by_lang, restrict=False):
+    """合并项目自己装的检查器：ruff（Python）、ESLint（JS/TS/Vue）、go vet（Go）。返回 (问题, 状态说明)。
+    restrict：只把给定文件交给检查器（改动范围扫描时用）。"""
     issues, notes = [], []
     if by_lang.get('python'):
-        ruff = ruff_issues(root, base)
+        ruff = ruff_issues(root, base, by_lang['python'] if restrict else None)
         issues += ruff or []
         notes.append('ruff 已合并' if ruff is not None else '未安装 ruff（pip install ruff 可增加 800+ 条 Python 规则）')
     js_files = [f for lang in (*JS_LANGS, *SFC_LANGS) for f in by_lang.get(lang, [])]
-    for found, note in (multi_lang.eslint_issues(root, base, js_files), multi_lang.go_vet_issues(root, base, by_lang.get('go', []))):
+    for found, note in (multi_lang.eslint_issues(root, base, js_files, restrict), multi_lang.go_vet_issues(root, base, by_lang.get('go', []), restrict)):
         issues += found or []
         if note: notes.append(note)
     return issues, '；'.join(notes) or '无可用的外部检查器'
 
 
-def scan(path, use_linters=True):
+def _git(cwd, *args):
+    return subprocess.run(['git', '-C', str(cwd), *args], capture_output=True, text=True, encoding='utf-8', errors='replace')
+
+
+def git_root(path):
+    """path 所在的 git 仓库根；不是仓库返回 None。"""
+    start = path if path.is_dir() else path.parent
+    r = _git(start, 'rev-parse', '--show-toplevel')
+    return Path(r.stdout.strip()).resolve() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _diff_hunks(top):
+    """git diff -U0 HEAD → {绝对路径: 新文件中的改动行号}。没有 HEAD 时退回比较暂存区。"""
+    r = _git(top, 'diff', '-U0', '--no-color', '--diff-filter=ACMR', 'HEAD')
+    if r.returncode != 0: r = _git(top, 'diff', '-U0', '--no-color', '--diff-filter=ACMR')
+    out, cur = {}, None
+    if r.returncode != 0: return out
+    for line in r.stdout.splitlines():
+        if line.startswith('+++ '):
+            spec = line[4:].strip()
+            if spec.startswith('b/'): spec = spec[2:]
+            if spec == '/dev/null':
+                cur = None; continue
+            if len(spec) >= 2 and spec[0] == spec[-1] == '"': spec = spec[1:-1]
+            p = (top / spec).resolve()
+            cur = p if p.is_file() else None
+            if cur is not None: out.setdefault(cur, set())
+        elif cur is not None and line.startswith('@@'):
+            m = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', line)
+            if not m: continue
+            start = int(m.group(1))
+            count = int(m.group(2)) if m.group(2) is not None else 1
+            if count <= 0:
+                if start > 0: out[cur].add(start)
+            else: out[cur].update(range(start, start + count))
+    return out
+
+
+def changed_files(start):
+    """未提交的改动。返回 (仓库根, 文件列表, {相对路径: 改动行集合或 None})。
+    行集合为 None 表示整个文件都算改动（未跟踪，或 diff 里看不出具体行）。不是仓库返回 (None, [], {})。"""
+    start = start.resolve()
+    top = git_root(start)
+    if not top: return None, [], {}
+    r = _git(top, 'diff', '--name-only', '--diff-filter=ACMR', '-z', 'HEAD')
+    if r.returncode != 0: r = _git(top, 'diff', '--name-only', '--diff-filter=ACMR', '-z')
+    tracked = [n for n in (r.stdout.split('\0') if r.returncode == 0 else []) if n]
+    u = _git(top, 'ls-files', '--others', '--exclude-standard', '-z')
+    untracked = {n for n in (u.stdout.split('\0') if u.returncode == 0 else []) if n}
+    hunks = _diff_hunks(top)
+    files, lines, seen = [], {}, set()
+    for name in tracked + list(untracked):
+        p = (top / name).resolve()
+        if p in seen or not p.is_file(): continue
+        if start.is_file():
+            if p != start: continue
+        elif not p.is_relative_to(start):
+            continue
+        if any(part in CODE_SKIP_DIRS for part in p.relative_to(top).parts[:-1]): continue
+        seen.add(p); files.append(p)
+        rel = str(p.relative_to(start if start.is_dir() else start.parent))
+        touched = hunks.get(p)
+        lines[rel] = None if name in untracked or not touched else touched
+    return top, files, lines
+
+
+def _on_changed_line(issue, lines):
+    """lines 为 None 时不筛选。行号对不上改动行的问题丢掉，避免把文件里的旧问题算进这次改动。"""
+    if lines is None: return True
+    span = lines.get(issue.get('file'))
+    if span is None: return issue.get('file') in lines
+    return not issue.get('line') or issue['line'] in span
+
+
+def _readable(f):
+    try: return f.stat().st_size <= MAX_FILE_BYTES
+    except OSError: return False
+
+
+def project_stack(path):
+    """从仓库根 / 目标目录的清单文件判断项目用了什么技术，不限于某一种语言。"""
+    start = path if path.is_dir() else path.parent
+    dirs = []
+    for d in (git_root(start) or start, start):
+        if d.is_dir() and d not in dirs: dirs.append(d)
+    found = []
+
+    def add(name):
+        if name and name not in found: found.append(name)
+
+    for d in dirs:
+        if (d/'pyproject.toml').is_file() or (d/'requirements.txt').is_file() or (d/'setup.py').is_file() or (d/'Pipfile').is_file(): add('Python')
+        if (d/'go.mod').is_file(): add('Go')
+        if (d/'Cargo.toml').is_file(): add('Rust')
+        if (d/'composer.json').is_file(): add('PHP')
+        if (d/'Gemfile').is_file(): add('Ruby')
+        if (d/'Package.swift').is_file(): add('Swift')
+        if (d/'pubspec.yaml').is_file(): add('Dart')
+        if (d/'mix.exs').is_file(): add('Elixir')
+        if (d/'pom.xml').is_file(): add('Java')
+        if (d/'build.gradle.kts').is_file(): add('Kotlin/Gradle')
+        elif (d/'build.gradle').is_file(): add('Java/Gradle')
+        if any(d.glob('*.csproj')) or any(d.glob('*.sln')): add('C#')
+        if (d/'CMakeLists.txt').is_file(): add('C/C++')
+        pkg = d/'package.json'
+        if pkg.is_file():
+            for name in _npm_stack(pkg, d): add(name)
+    return found
+
+
+def _npm_stack(pkg, directory):
+    try: data = json.loads(pkg.read_text(encoding='utf-8', errors='replace')[:500_000])
+    except (OSError, json.JSONDecodeError): return ['JavaScript']
+    deps = {}
+    for key in ('dependencies', 'devDependencies', 'peerDependencies'): deps.update(data.get(key) or {})
+    names = ['TypeScript' if (directory/'tsconfig.json').is_file() else 'JavaScript']
+    for flag, label in (('react', 'React'), ('react-dom', 'React'), ('vue', 'Vue'), ('svelte', 'Svelte'),
+                        ('@angular/core', 'Angular'), ('next', 'Next.js'), ('nuxt', 'Nuxt'), ('solid-js', 'Solid')):
+        if flag in deps and label not in names: names.append(label)
+    return names
+
+
+def scan(path, use_linters=True, scope='all'):
+    """scope=all 扫整个目录；scope=changed 只扫当前未提交的改动（工作区、暂存、未跟踪）。"""
+    if scope not in ('all', 'changed'): raise ValueError('scope 只能是 all 或 changed')
     root = Path(path).expanduser().resolve(); base = root if root.is_dir() else root.parent
-    (files, truncated), issues, texts, ncloc, functions = code_files(root), [], {}, 0, 0
-    compiled = {f for f in files if is_compiled(f)}
-    files = [f for f in files if f not in compiled]
+    stack, uncovered, note, line_map = project_stack(root), [], '', None
+    if scope == 'changed':
+        top, changed, line_map = changed_files(root)
+        if top is None: raise ValueError('不在 git 仓库中，无法按当前改动扫描。要扫整个目录请用 scope=all。')
+        candidates = [f for f in changed if language_of(f) and not GENERATED.search(f.name) and _readable(f)]
+        compiled = {f for f in candidates if is_compiled(f)}
+        files, truncated = [f for f in candidates if f not in compiled], False
+        for f in changed:
+            if f in candidates or GENERATED.search(f.name) or not _readable(f): continue
+            suffix = f.suffix.lower()
+            if not suffix or suffix in NON_CODE_EXT: continue
+            label = EXTRA_SOURCE.get(suffix) or suffix.lstrip('.').upper()
+            uncovered.append({'file': str(f.relative_to(base)) if f.is_relative_to(base) else str(f), 'language': label})
+        if not files and not uncovered: note = '当前没有未提交的代码改动（对比 HEAD，含已暂存和未跟踪文件）。'
+        config_only = {f.resolve() for f in changed}
+    else:
+        files, truncated = code_files(root)
+        compiled = {f for f in files if is_compiled(f)}
+        files = [f for f in files if f not in compiled]
+        config_only = None
+    issues, texts, ncloc, functions = [], {}, 0, 0
     by_lang, test_files = defaultdict(list), 0
     for f in files:
         lang = language_of(f); by_lang[lang].append(f)
@@ -332,22 +477,26 @@ def scan(path, use_linters=True):
         if TEST_PATH.search(rel):
             test_files += 1; found = [i for i in found if not test_exempt(i)]; texts.pop(rel, None)
         issues += found; ncloc += lines; functions += funcs
-    config, config_files = multi_lang.config_issues(root, base) if root.is_dir() else ([], 0)
+    config_ext = {'.yml', '.yaml', '.properties', '.json', '.xml'}
+    want_config = root.is_dir() and (config_only is None or any(p.suffix.lower() in config_ext for p in config_only))
+    config, config_files = multi_lang.config_issues(root, base, config_only) if want_config else ([], 0)
     issues += config
-    linter_issues, linters = external_linters(root, base, by_lang) if use_linters and files else ([], '未启用' if not use_linters else '无代码文件')
+    linter_issues, linters = external_linters(root, base, by_lang, scope == 'changed') if use_linters and files else ([], '未启用' if not use_linters else '无代码文件')
     issues += linter_issues
     seen, unique = set(), []
     for i in issues:
         key = (i['file'], i['line'], i['rule'])
         if key not in seen: seen.add(key); unique.append(i)
     issues = sorted(unique, key=lambda i: (SEVERITIES.index(i['severity']), i['file'] or '', i['line'] or 0))
+    if line_map is not None: issues = [i for i in issues if _on_changed_line(i, line_map)]
     dup_density, dup_blocks = duplication(texts)
     by_type = lambda t: [i for i in issues if i['type'] == t]
     debt = sum(DEBT_MINUTES[i['severity']] for i in by_type('CODE_SMELL'))
     ratio = debt / (ncloc * 30) if ncloc else 0
     maint = next(r for r, limit in [('A', .05), ('B', .1), ('C', .2), ('D', .5), ('E', 9e9)] if ratio <= limit)
     languages = Counter({DISPLAY[lang]: len(fs) for lang, fs in by_lang.items()})
-    return {'path': str(root), 'files': len(files), 'test_files': test_files, 'compiled_skipped': len(compiled), 'truncated': truncated, 'languages': dict(languages.most_common()),
+    return {'path': str(root), 'scope': scope, 'stack': stack, 'uncovered': uncovered, 'note': note,
+            'files': len(files), 'test_files': test_files, 'compiled_skipped': len(compiled), 'truncated': truncated, 'languages': dict(languages.most_common()),
             'config_files': config_files,
             'ncloc': ncloc, 'functions': functions, 'issues': issues,
             'counts': {t: len(by_type(t)) for t in ('BUG', 'VULNERABILITY', 'SECURITY_HOTSPOT', 'CODE_SMELL')},

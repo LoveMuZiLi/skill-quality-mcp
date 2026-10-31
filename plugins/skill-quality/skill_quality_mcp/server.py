@@ -27,7 +27,9 @@ mcp = MCPServer(
     name='skill-quality',
     version=__version__,
     instructions=(
-        '检查 Agent Skill 或代码目录的质量（Python、JS/TS、React、Vue、Java、Kotlin、Go、C#、PHP）。'
+        '检查 Agent Skill 或代码目录的质量。不要假定语言：按目标项目实际使用的技术来查。'
+        '查当前未提交改动时，code_quality_scan / full_quality_report 传 scope=changed；'
+        '报告里「本地规则未覆盖」的文件，要按那个语言自己检查并修改。'
         '要结论用 full_quality_report；只看某一项用 inspect_skill / analyze_dependencies / '
         'code_quality_scan / sonar_*。默认返回简版：计数完整，问题按严重度只列前几条，完整报告写入文件并给出路径，'
         '需要全部明细时再读该文件或传 detail=true。target/path 可传技能名、技能目录或代码路径，优先绝对路径。'),
@@ -143,12 +145,14 @@ def analyze_dependencies(path: str, check_vulnerabilities: bool = False, detail:
 
 
 @tool
-def code_quality_scan(path: str, use_linters: bool = True, max_issues: int = 30, detail: bool = False) -> str:
-    """本地 Bug 与代码质量扫描（无需 SonarQube）：Python、JS/TS、React、Vue、Svelte、Java、Kotlin、Go、C#、PHP，
-    外加 Spring/.NET 配置里写死的密码和 MyBatis ${} 拼接；给出 Bug、漏洞、安全热点、异味、复杂度、重复、技术债和 A–E 评级。
-    use_linters：合并已装的 ruff、项目里的 ESLint（会加载项目的 ESLint 配置）、go vet。max_issues：简版列出的重要问题条数。detail：列出全部问题。"""
+def code_quality_scan(path: str, use_linters: bool = True, max_issues: int = 30, detail: bool = False, scope: str = 'all') -> str:
+    """本地 Bug 与代码质量扫描（无需 SonarQube）。按文件识别语言，不假定项目只用某一种技术。
+    内置规则覆盖 Python、JS/TS、React、Vue、Svelte、Java、Kotlin、Go、C#、PHP，以及 Spring/.NET 配置和 MyBatis ${}；
+    改动里如果是别的语言，结果会列出文件，调用方按该语言自己检查并修改。
+    scope：all=整个目录，changed=只扫当前未提交改动（相对 HEAD 的工作区、暂存区，以及未跟踪文件）。
+    use_linters：合并已装的 ruff、项目里的 ESLint、go vet。max_issues：简版列出的重要问题条数。detail：列出全部问题。"""
     target, _, note = resolve_target(path)
-    q = sq_local.scan(target, use_linters)
+    q = sq_local.scan(target, use_linters, scope)
     brief = sq_report.local_section(q, max(1, max_issues))
     return note + brief_or_full(f'quality-{target.name}', brief, sq_report.local_section(q, None), detail)
 
@@ -184,14 +188,15 @@ def sonar_run_scan(path: str, project_key: str = '', use_npx: bool = False) -> s
 
 
 @tool(read_only=False, open_world=True)
-def full_quality_report(target: str, sonar: str = 'auto', check_vulnerabilities: bool = False, detail: bool = False, save_to: str = '') -> str:
+def full_quality_report(target: str, sonar: str = 'auto', check_vulnerabilities: bool = False, detail: bool = False, save_to: str = '', scope: str = 'all') -> str:
     """一站式报告：Skill 结构（目标是技能时）+ 依赖 + 本地扫描 + SonarQube，给出 通过/有警告/未通过。
     sonar：auto=已配置就拉结果，scan=先扫描再拉，off=不用。check_vulnerabilities：联网查 OSV。
+    scope：all=整个目录，changed=代码质量只扫当前未提交改动，并标出本地规则不覆盖的语言。
     detail：返回完整报告。save_to：完整报告另存路径（.md）。"""
     path, skill_dir, note = resolve_target(target)
     skill = sq_skills.validate_skill(skill_dir) if skill_dir else None
     deps = sq_deps.analyze(path, check_vulnerabilities)
-    local = sq_local.scan(path)
+    local = sq_local.scan(path, scope=scope)
     if sonar == 'off': sonar_part = {'skipped': '按参数关闭'}
     elif not sq_sonar.configured(): sonar_part = {'skipped': '未配置 SONAR_HOST_URL / SONAR_TOKEN，只用本地规则'}
     elif not sq_sonar.config()['project']: sonar_part = {'skipped': '未配置 SONAR_PROJECT_KEY，无法定位 SonarQube 项目'}
@@ -215,6 +220,8 @@ def full_quality_report(target: str, sonar: str = 'auto', check_vulnerabilities:
 def review_skill(skill: str) -> str:
     """让 Agent 生成质量报告并按严重度修复问题。"""
     return (f'调用 full_quality_report，target="{skill}"，check_vulnerabilities=true。'
+            '若要查的是当前项目里还没提交的改动，scope 传 changed，并按报告里的项目技术和各文件的语言修改，不要假定某一种技术。'
+            '本地规则没覆盖的语言，打开那些改动文件自己修明确的 bug 和质量问题。'
             '先给结论和原因，再按 BLOCKER → CRITICAL → MAJOR 给修复方案，每处引用文件和行号；简版没列全时读返回的完整报告文件。'
             '改完再跑一次对比。安全热点只提示人工确认，不擅自改业务逻辑。')
 

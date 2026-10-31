@@ -205,16 +205,25 @@ def _vuln_lines(d, full):
 
 def local_section(q, limit=BRIEF_LIMIT):
     c, r = q['counts'], q['ratings']
-    scope = f"{q['files']} 个代码文件（{language_counts(q.get('languages'))}）" + ('（**达到文件上限，后面的未扫描**）' if q.get('truncated') else '')
+    scope = ('当前改动里的 ' if q.get('scope') == 'changed' else '') + f"{q['files']} 个代码文件（{language_counts(q.get('languages'))}）" + ('（**达到文件上限，后面的未扫描**）' if q.get('truncated') else '')
     if q.get('config_files'): scope += f"、{q['config_files']} 个配置/Mapper 文件"
     if q.get('test_files'): scope += f"；其中 {q['test_files']} 个测试文件不报安全类问题和重复字符串"
     if q.get('compiled_skipped'): scope += f"；跳过 {q['compiled_skipped']} 个带 sourcemap 的编译产物"
-    out = ['## 代码质量（本地规则）\n',
-           f"评级：可靠性 {r['reliability']}｜安全性 {r['security']}｜可维护性 {r['maintainability']}；"
-           f"Bug {c['BUG']}、漏洞 {c['VULNERABILITY']}、热点 {c['SECURITY_HOTSPOT']}、异味 {c['CODE_SMELL']}",
-           f"{scope}；{q['ncloc']} 行、{q['functions']} 个函数；重复 {q['duplicated_lines_density']}%；"
-           f"技术债 {q['technical_debt_minutes']} 分钟（{q['debt_ratio_percent']}%）",
-           f"外部检查器：{q['linters']}\n"]
+    out = ['## 代码质量（本地规则）\n']
+    if q.get('stack'): out.append('项目技术：' + '、'.join(q['stack']))
+    if q.get('note'): out.append(q['note'])
+    elif q.get('scope') == 'changed': out.append('只列出落在改动行上的问题；同一文件里没改到的旧问题不算，也不要顺手去改。')
+    out += [f"评级：可靠性 {r['reliability']}｜安全性 {r['security']}｜可维护性 {r['maintainability']}；"
+            f"Bug {c['BUG']}、漏洞 {c['VULNERABILITY']}、热点 {c['SECURITY_HOTSPOT']}、异味 {c['CODE_SMELL']}",
+            f"{scope}；{q['ncloc']} 行、{q['functions']} 个函数；重复 {q['duplicated_lines_density']}%；"
+            f"技术债 {q['technical_debt_minutes']} 分钟（{q['debt_ratio_percent']}%）",
+            f"外部检查器：{q['linters']}\n"]
+    uncovered = q.get('uncovered') or []
+    if uncovered:
+        shown = uncovered if limit is None else uncovered[:12]
+        out.append('**本地规则未覆盖的改动文件**（按各自语言检查并修改，不要跳过）：'
+                   + '；'.join(f"{u['file']}（{u['language']}）" for u in shown)
+                   + (f'；等 {len(uncovered)} 个' if len(shown) < len(uncovered) else '') + '\n')
     blocks = q['duplicated_blocks']
     if blocks:
         shown = blocks if limit is None else blocks[:3]
@@ -275,6 +284,7 @@ def verdict(skill, deps, local, sonar):
     if local['ratings']['maintainability'] in ('C', 'D', 'E'): warnings.append(f"可维护性评级 {local['ratings']['maintainability']}")
     if local['counts']['SECURITY_HOTSPOT']: warnings.append(f"{local['counts']['SECURITY_HOTSPOT']} 个安全热点待人工确认")
     if local.get('truncated') or deps.get('truncated'): warnings.append('文件数超过上限，只扫描了一部分')
+    if local.get('uncovered'): warnings.append(f"改动里有 {len(local['uncovered'])} 个文件不在本地规则覆盖的语言里，需按该语言单独检查")
     if sonar and sonar.get('metrics') and sonar['metrics']['metrics'].get('quality_gate') == 'ERROR': blockers.append('SonarQube 质量门禁未通过')
     status = '未通过' if blockers else ('有警告' if warnings else '通过')
     return status, blockers, warnings

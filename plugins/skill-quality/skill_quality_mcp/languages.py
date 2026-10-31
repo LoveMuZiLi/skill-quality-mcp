@@ -17,6 +17,16 @@ LANG_BY_EXT = {
     '.vue': 'vue', '.svelte': 'svelte',
     '.java': 'java', '.kt': 'kotlin', '.kts': 'kotlin', '.go': 'go', '.cs': 'csharp', '.php': 'php',
 }
+# 本地规则还没覆盖、但改动里出现时要告诉调用方自己按该语言检查的源文件
+EXTRA_SOURCE = {
+    '.rs': 'Rust', '.rb': 'Ruby', '.erb': 'Ruby', '.swift': 'Swift', '.dart': 'Dart',
+    '.c': 'C', '.h': 'C/C++', '.hh': 'C++', '.cc': 'C++', '.cpp': 'C++', '.cxx': 'C++', '.hpp': 'C++', '.hxx': 'C++',
+    '.m': 'Objective-C', '.mm': 'Objective-C++', '.scala': 'Scala', '.sc': 'Scala', '.groovy': 'Groovy',
+    '.ex': 'Elixir', '.exs': 'Elixir', '.erl': 'Erlang', '.hrl': 'Erlang', '.hs': 'Haskell', '.lua': 'Lua',
+    '.r': 'R', '.sql': 'SQL', '.sh': 'Shell', '.bash': 'Shell', '.zsh': 'Shell', '.ps1': 'PowerShell',
+    '.tf': 'Terraform', '.proto': 'Protobuf', '.zig': 'Zig', '.nim': 'Nim', '.clj': 'Clojure', '.cljs': 'ClojureScript',
+    '.fs': 'F#', '.fsx': 'F#', '.vb': 'Visual Basic', '.pl': 'Perl', '.pm': 'Perl', '.sol': 'Solidity',
+}
 DISPLAY = {'python': 'Python', 'javascript': 'JavaScript', 'jsx': 'JSX', 'typescript': 'TypeScript', 'tsx': 'TSX',
            'vue': 'Vue', 'svelte': 'Svelte', 'java': 'Java', 'kotlin': 'Kotlin', 'go': 'Go', 'csharp': 'C#', 'php': 'PHP'}
 JS_LANGS = frozenset({'javascript', 'jsx', 'typescript', 'tsx'})
@@ -24,6 +34,12 @@ SFC_LANGS = frozenset({'vue', 'svelte'})
 CODE_SKIP_DIRS = SKIP_DIRS | {'dist', 'build', 'out', 'target', 'coverage', 'vendor', 'obj', 'bower_components', '.next', '.nuxt',
                               '.output', '.svelte-kit', '.turbo', '.cache', '.parcel-cache', '.gradle', '.mvn', '.idea', '.vscode',
                               '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox'}
+# 改动里出现、但既不是代码也不是要单独报的资源
+NON_CODE_EXT = {
+    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.svg', '.pdf', '.zip', '.gz', '.woff', '.woff2', '.ttf', '.eot',
+    '.lock', '.md', '.txt', '.rst', '.json', '.yml', '.yaml', '.xml', '.html', '.css', '.scss', '.less', '.map', '.snap',
+    '.csv', '.tsv', '.log', '.toml', '.ini', '.cfg', '.conf', '.env', '.sum', '.mod', '.gradle', '.plist', '.pbxproj',
+}
 FILE_LIMIT, MAX_FILE_BYTES = 5000, 1_000_000
 GENERATED = re.compile(r'\.(?:min|bundle|chunk)\.[cm]?js$|\.d\.[cm]?ts$|\.(?:pb|g|generated)\.\w+$|_pb2(?:_grpc)?\.py$', re.I)
 TEST_PATH = re.compile(r'(?:^|[\\/])(?:__tests__|__mocks__|tests?|spec|testdata|e2e)[\\/]|(?:^|[\\/])test_[^\\/]*\.py$|_test\.(?:py|go)$'

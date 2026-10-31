@@ -565,11 +565,13 @@ CONFIG_NAME = re.compile(r'^(?:application|bootstrap)(?:-[\w.-]+)?\.(?:ya?ml|pro
 CONFIG_PLACEHOLDER = re.compile(r'^(?:\$\{|#\{|ENC\(|\{cipher\}|<|%|\{\{)|^(?:true|false|null|~|none)$', re.I)
 
 
-def config_issues(root, base):
-    """Spring / .NET 配置文件里写死的密码、密钥；MyBatis Mapper XML 里的 ${} 拼接。返回 (问题, 检查的文件数)。"""
+def config_issues(root, base, only=None):
+    """Spring / .NET 配置文件里写死的密码、密钥；MyBatis Mapper XML 里的 ${} 拼接。返回 (问题, 检查的文件数)。
+    only：只检查这些绝对路径（改动范围扫描时用），None 表示目录下全部。"""
     files, _ = walk_files(root, {'.yml', '.yaml', '.properties', '.json', '.xml'}, 3000, CODE_SKIP_DIRS)
     issues, checked = [], 0
     for f in files:
+        if only is not None and f.resolve() not in only: continue
         is_config = bool(CONFIG_NAME.match(f.name))
         if not is_config and f.suffix != '.xml': continue
         try:
@@ -630,16 +632,23 @@ def _eslint_projects(root, files):
     return sorted(out, key=lambda d: len(d.parts))
 
 
-def eslint_issues(root, base, files):
+def eslint_issues(root, base, files, restrict=False):
     node = shutil.which('node')
     if not node or not files: return None, ''
     projects = _eslint_projects(root, files)
     if not projects: return None, '没有找到项目里安装的 ESLint 和配置'
     issues, notes = [], []
+    allowed = {str(f.resolve()) for f in files} if restrict else None
     for proj in projects:
         target = root if root.is_relative_to(proj) else proj
+        if restrict:
+            mine = [str(f) for f in files if f.resolve().is_relative_to(proj)]
+            if not mine: continue
+            targets = mine
+        else:
+            targets = [str(target)]
         try:
-            r = subprocess.run([node, str(proj/'node_modules'/'eslint'/'bin'/'eslint.js'), '-f', 'json', '--no-error-on-unmatched-pattern', str(target)],
+            r = subprocess.run([node, str(proj/'node_modules'/'eslint'/'bin'/'eslint.js'), '-f', 'json', '--no-error-on-unmatched-pattern', *targets],
                                cwd=proj, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=300)
         except subprocess.TimeoutExpired:
             notes.append(f'{proj.name} 超时'); continue
@@ -648,6 +657,7 @@ def eslint_issues(root, base, files):
             notes.append(f"{proj.name} 运行失败：{(r.stderr or r.stdout).strip().splitlines()[-1][:120] if (r.stderr or r.stdout).strip() else '无输出'}"); continue
         for fr in data:
             fp = Path(fr['filePath'])
+            if allowed is not None and str(fp.resolve()) not in allowed: continue
             rel = str(fp.relative_to(base)) if fp.is_relative_to(base) else str(fp)
             for msg in fr.get('messages', []):
                 rid = msg.get('ruleId')
@@ -658,9 +668,10 @@ def eslint_issues(root, base, files):
     return issues, 'ESLint 已合并' + (f"（{'；'.join(notes)}）" if notes else '')
 
 
-def go_vet_issues(root, base, files):
+def go_vet_issues(root, base, files, restrict=False):
     go = shutil.which('go')
     if not files: return None, ''
+    allowed = {str(f.resolve()) for f in files} if restrict else None
     if not go: return None, '未安装 go，跳过 go vet'
     mods, seen = set(), {}
     for d in {f.parent for f in files}:
@@ -682,6 +693,7 @@ def go_vet_issues(root, base, files):
             notes.append(f'{mod.name} 依赖未下载（先 go mod download）'); continue
         for m in re.finditer(r'(?m)^(?:vet: )?(.+?\.go):(\d+):(?:\d+:)?\s*(.+)$', out):
             fp = (mod/m.group(1)).resolve()
+            if allowed is not None and str(fp) not in allowed: continue
             rel = str(fp.relative_to(base)) if fp.is_relative_to(base) else m.group(1)
             issues.append({'type': 'BUG', 'severity': 'MAJOR', 'rule': 'govet', 'message': m.group(3).strip(), 'file': rel, 'line': int(m.group(2))})
     return issues, 'go vet 已合并' + (f"（{'；'.join(notes)}）" if notes else '')

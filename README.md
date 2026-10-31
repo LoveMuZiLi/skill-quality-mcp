@@ -59,6 +59,7 @@
 - 70+ 条本地规则：Bug、漏洞、安全热点、代码异味，外加 Spring 配置和 MyBatis Mapper 检查
 - 认知复杂度、超长函数、重复代码、技术债，按 SonarQube 口径给出 **A–E 评级**
 - 项目里装了 [ESLint](https://eslint.org/)、[ruff](https://docs.astral.sh/ruff/)、go 时自动合并 ESLint / ruff / go vet 的结果
+- `scope=changed` 只扫当前未提交的改动（不限语言；内置规则没覆盖的文件会点名，交给调用方按该语言修改）
 
 </td>
 <td width="50%" valign="top">
@@ -248,7 +249,7 @@ pip install git+https://github.com/LoveMuZiLi/skill-quality-mcp
 | Skills | `list_skills` | 列出 Cursor、Codex、Claude 用户目录和插件里的所有技能，提示重名 |
 | | `inspect_skill` | 检查单个技能的结构 |
 | 依赖 | `analyze_dependencies` | 依赖分析；`check_vulnerabilities=true` 时联网查 OSV |
-| 代码质量 | `code_quality_scan` | 本地 Bug 检测和 A–E 评级 |
+| 代码质量 | `code_quality_scan` | 本地 Bug 检测和 A–E 评级。`scope=changed` 只查当前未提交改动，并标出内置规则没覆盖的语言 |
 | SonarQube | `sonar_check_connection` | 检查配置和连通性 |
 | | `sonar_issues` | 拉取未解决的问题，可按类型、严重度筛选 |
 | | `sonar_project_metrics` | 指标与质量门禁 |
